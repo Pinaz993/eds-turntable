@@ -1,0 +1,58 @@
+# turntable.hal
+# LOAD COMPONENTS
+# Load the kinematics system
+loadrt [KINS]KINEMATICS
+# Load the GPIO driver w/pin configuration
+loadrt hal_gpio inputs=[GPIO]INPUTS outputs=[GPIO]OUTPUTS invert=[GPIO]INVERT
+# Load the step generator
+# One stepper of the default setp type and the default control type
+loadrt stepgen step_type=0
+# Load the motion controller w/ thread configuration
+loadrt motmod base_period_nsec=[MOTMOD]BASE_PERIOD_NSEC servo_period_nsec=[MOTMOD]SERVO_PERIOD_NSEC num_joints=[KINS]NUM_JOINTS
+
+# ADD FUNCTIONS
+# Stepper pulses
+addf stepgen.make-pulses base-thread
+# Reading from the GPIO
+addf hal_gpio.read base-thread
+# Writing to the GPIO
+addf hal_gpio.write base-thread
+# Capturing position is needed even on open-loop systems (via Claude) 
+addf stepgen.capture-position servo-thread
+# I _think_ these help in transforming positions into movement instructions.
+addf motion-command-handler servo-thread
+addf motion-controller servo-thread
+# Accept velocity commands and interpret them for making pulses
+addf stepgen.update-freq servo-thread
+
+# DEFINE SIGNALS
+# Emergency stop from button on GPIO 24 (18)
+net estop-in hal_gpio.GPIO24-in => iocontrol.0.emc-enable-in
+# X axis direction on GPIO 22 (15)
+net xdir stepgen.0.dir => hal_gpio.GPIO22-out
+# X axis step pulses on GPIO 27 (13)
+net xstep stepgen.0.step => hal_gpio.GPIO27-out
+# Enable signal for step-gen...
+net xenable joint.0.amp-enable-out => stepgen.0.enable
+# ...and for GPIO 17 (11)
+net xenable joint.0.amp-enable-out => hal_gpio.GPIO17-out
+# Kinematics position command
+net xpos-cmd joint.0.motor-pos-cmd => stepgen.0.position-cmd
+# Kinematics position feedback (no feedback mechanism in hardware)
+net xpos-fb stepgen.0.position-fb => joint.0.motor-pos-fb
+
+# SET PARAMETERS
+# Scale of steps to joint unit
+setp stepgen.0.position-scale [JOINT_0]SCALE
+# Minimum length of step pulses
+setp stepgen.0.steplen [STEPGEN_0]STEP_LEN
+# Minimum length between step pulses
+setp stepgen.0.stepspace [STEPGEN_0]STEP_SPACE
+# Minimum time between rising edge of direction signal and rising edge of step pulse
+setp stepgen.0.dirsetup [STEPGEN_0]DIR_SETUP
+# Minimum time to hold direction signal after last step pulse
+setp stepgen.0.dirhold [STEPGEN_0]DIR_HOLD
+# Maximum acceleration/deceleration rate.
+setp stepgen.0.maxaccel [JOINT_0]STEPGEN_MAXACCEL
+# Maximum speed
+setp stepgen.0.maxvel [JOINT_0]MAX_VELOCITY
