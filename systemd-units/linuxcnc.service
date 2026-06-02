@@ -1,0 +1,14 @@
+[Unit]
+Description=LinuxCNC Machine Controller
+After=network.target
+
+[Service]
+Type=simple
+User=turntable
+WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
+ExecStart=/bin/bash -c 'echo "" | /usr/bin/linuxcnc /home/turntable/linuxcnc/configs/turntable/turntable.ini'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

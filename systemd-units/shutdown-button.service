@@ -1,0 +1,14 @@
+[Unit]
+Description=Power Button Monitor
+After=multi-user.target
+
+[Service]
+Type=simple
+User=turntable
+WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
+ExecStart=/usr/bin/python3 /home/turntable/linuxcnc/configs/turntable/shutdown_button.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

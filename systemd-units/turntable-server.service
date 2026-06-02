@@ -1,0 +1,15 @@
+[Unit]
+Description=Turntable Web Controller
+After=network.target linuxcnc.service
+Requires=linuxcnc.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
+ExecStart=/usr/bin/python3 /home/turntable/linuxcnc/configs/turntable/turntable_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
