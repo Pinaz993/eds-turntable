@@ -170,13 +170,15 @@ class LinuxCNCBridge:
         RuntimeError
             If any startup step fails to complete within STARTUP_TIMEOUT seconds.
         """
+        print("Starting LinuxCNC startup sequence", flush=True)
         # Drain any stale errors from previous sessions. While there are errors to be grabbed:
         while self._errors.poll():
             # Do nothing with the grabbed error.
             pass
         # End while
 
-        # Cycle estop state, in case of strangeness
+        # Cycle estop state, in case of strangeness\
+        print("Cycling ESTOP...", flush=True)
         # Set ESTOP on
         self._command.state(linuxcnc.STATE_ESTOP)
         # Wait a bit
@@ -189,8 +191,10 @@ class LinuxCNCBridge:
             raise RuntimeError('Failed to clear ESTOP before timeout')
         # End if
         # ESTOP is guaranteed to be off.
+        print("ESTOP cleared", flush=True)
 
         # Try to enable the machine.
+        print("Enabling machine...", flush=True)
         self._command.state(linuxcnc.STATE_ON)
         # Poll until the machine is reported enabled. If you run out of time...
         if not self._poll_until(lambda: self._status.enabled):
@@ -198,26 +202,35 @@ class LinuxCNCBridge:
             raise RuntimeError('Failed to enable machine before timeout')
         # End if
         # Machine is guaranteed to be enabled.
+        print("Machine enabled.", flush=True)
 
         # Switch the machine to manual mode.
+        print("Switching to manual mode...", flush=True)
         self._command.mode(linuxcnc.MODE_MANUAL)
         # I think you get the picture.
         if not self._poll_until(lambda: self._status.task_mode == linuxcnc.MODE_MANUAL):
             raise RuntimeError('Failed to set machine to manual mode before timeout')
         # End if
+        print("Manual mode confirmed.")
+
         # Home joint #0
+        print("Homing joint #0", flush=True)
         self._command.home(0)
         if not self._poll_until(lambda: self._status.homed[0], timeout=15.0):
             raise RuntimeError('Failed to home A axis (joint 0) before timeout')
         # End if
         # Axis A is guaranteed to be homed, and so can be moved.
+        print("Joint #0 homed successfully.")
 
         # Switch the machine to MDI mode
+        print("Switching to MDI mode...", flush=True)
         self._command.mode(linuxcnc.MODE_MDI)
         if not self._poll_until(lambda: self._status.task_mode == linuxcnc.MODE_MDI):
             raise RuntimeError('Failed to set machine to MDI mode before timeout')
         # End if
         # Machine is now ready to accept MDI commands.
+        print("Machine now MDI command ready.")
+        print("LinuxCNC startup sequence complete.", flush=True)
 
     # End startup_sequence()
 
@@ -233,6 +246,7 @@ class LinuxCNCBridge:
         Silently skips any note whose move fails to complete, so a stuck or slow note
         does not abort the whole chime. Does not raise; errors here are non-fatal.
         """
+        print("Playing ready chime with stepper on joint #0")
         for _name, _hz, feed in self._READY_CHIME:
             # G91 = incremental mode, G1 = feed-rate move, F in deg/min
             self._command.mdi(f'G91 G1 A{self.NOTE_DEGREES:.1f} F{feed:.2f}')

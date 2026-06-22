@@ -66,15 +66,26 @@ def _init_network():
     Sets ALLOWED_NETWORK on success, calls on_error() and returns on failure.
     """
     global ALLOWED_NETWORK
+    # Log the stage we're in:
+    print("Initializing network...", flush=True)
     for attempt in range(1, NETWORK_RETRY_ATTEMPTS + 1):
+        # Try to get the network address for the Ethernet port.
         network = _get_interface_network('eth0')
+        # Do we have a network address to work with?
         if network is not None:
+            # Set the LAN identifier
             ALLOWED_NETWORK = network
+            # Log our address and prefix length
+            print(f"Network Ready: {network.with_prefixlen}", flush=True)
             return
-        # Not ready yet — log and wait before retrying
+        # If not, then the network stack isn't usable yet.
+        # Have we already tried the maximum number of times?
         if attempt < NETWORK_RETRY_ATTEMPTS:
+            # Log it.
+            print(f"eth0 not yet ready, attempt {attempt}/{NETWORK_RETRY_ATTEMPTS}. retrying in {NETWORK_RETRY_DELAY_SEC}s...", flush=True)
+            # Wait, and try again.
             socketio.sleep(NETWORK_RETRY_DELAY_SEC)
-    # Exhausted all retries without getting a real address
+    # We've exhausted all retries without getting a real address. Error out.
     on_error(
         f"Could not get network address for eth0 after "
         f"{NETWORK_RETRY_ATTEMPTS} attempts. "
@@ -153,11 +164,12 @@ def on_move_complete():
 
 # Called when the machine encounters an unrecoverable system error.
 def on_error(message: str):
+    # Log right away, in case anything else goes wrong
+    print(f"[UNRECOVERABLE ERROR] {message}", flush=True)
     # We have a global variable for this.
     global _system_error
+    # Let anyone who cares know.
     _system_error = message
-    # Log, because it's the responsible thing to do.
-    print(f"[UNRECOVERABLE ERROR] {message}", flush=True)
     # Set the LED to communicate that the machine needs to be restarted
     led.set_status('system_error')
     # Inform all clients that the machine cannot accept further commands without a restart.
