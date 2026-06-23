@@ -6,11 +6,9 @@ import signal
 import socket
 import struct
 import subprocess
-
 import linuxcnc
 from flask import Flask, render_template, request, abort
 from flask_socketio import SocketIO, emit
-
 from lcnc_bridge import LinuxCNCBridge
 from led import StatusLED
 
@@ -189,19 +187,16 @@ def _monitor_estop():
     """
     global _estop_monitor_running
     _estop_monitor_running = True
-
-    # Grab the stat monitor from LinuxCNC's Python library.
-    stat = linuxcnc.stat()
     # By default, estop is off.
     in_estop = False
     # Loop for as long as we are supposed to monitor.
     while _estop_monitor_running:
         # If `linuxcnc.stat()` isn't available, we need to be prepared
         try:
-            # Update to the current state
-            stat.poll()
+            # Grab the latest information
+            bridge.status.poll()
             # stat.estop is a direct boolean — True when e-stop is active
-            currently_estopped = stat.estop
+            currently_estopped = bridge.status.estop
             if currently_estopped and not in_estop:
                 # E-stop just became active
                 # Update our records
@@ -325,11 +320,10 @@ def _recalculate_led_status() -> None:
     if _system_error:
         led.set_status('system_error')
         return
-    # Grab a stats object from LinuxCNC and update to the latest machine stats.
-    stat = linuxcnc.stat()
-    stat.poll()
-    # stat.estop is a direct boolean — True when e-stop is active
-    if stat.estop:
+    # Grab the latest info.
+    bridge.status.poll()
+    # Is ESTOP on?
+    if bridge.status.estop:
         led.set_status('estop_active')
     # Are we busy with a move?
     elif bridge and bridge.is_busy:
@@ -337,7 +331,7 @@ def _recalculate_led_status() -> None:
     # Otherwise, we're ready for a command.
     else:
         led.set_status('ready')
-# End _recalculate_led_status()
+#END _recalculate_led_status()
 
 # ---------------------------------------------------------------------------
 # Shutdown handler
@@ -380,7 +374,7 @@ def _startup():
     # NML is confirmed live at this point — safe to start polling.
     # E-stop monitor runs independently for its entire lifetime.
     socketio.start_background_task(_monitor_estop)
-# End _startup()
+#END _startup()
 
 if __name__ == '__main__':
     # Set the LED to communicate that the machine is setting up
@@ -396,4 +390,3 @@ if __name__ == '__main__':
     # machine initializes. The subnet filter stays closed until network init succeeds.
     socketio.start_background_task(_startup)
     socketio.run(app, host=SERVER_HOST, port=SERVER_PORT)
-# End if name is main
