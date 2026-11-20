@@ -1,0 +1,269 @@
+/* style.css — turntable control panel */
+
+:root {
+  --enamel: #d9dcd6;
+  --panel:  #f2f3f0;
+  --ink:    #161b1d;
+  --steel:  #5b666b;
+  --rule:   #b9beb7;
+  --focus:  #1d5fd1;
+
+  /* Same colours as the physical LED (see led.py). */
+  --led-green:  #1f8a4c;
+  --led-blue:   #1d5fd1;
+  --led-red:    #c62828;
+  --led-yellow: #e0a100;
+  --led-off:    #4a2b2b;
+  --led-idle:   #9aa1a4;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { background: var(--enamel); }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--enamel);
+  -webkit-text-size-adjust: 100%;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.panel {
+  max-width: 28rem;
+  margin: 0 auto;
+  background: var(--panel);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* ---------- Status ---------- */
+
+.status {
+  --a: var(--led-idle);
+  --b: var(--led-idle);
+  --period: 1s;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem 1.25rem 1.25rem 1rem;
+  border-bottom: 2px solid var(--ink);
+  border-left: 0.5rem solid var(--a);
+}
+
+.status-text { min-width: 0; }
+.status h1 { margin: 0; font-size: 1.5rem; line-height: 1.15; font-weight: 700; }
+.status p  { margin: 0.25rem 0 0; color: var(--steel); overflow-wrap: anywhere; }
+
+.lamp {
+  flex: none;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--a);
+  animation: lamp var(--period) steps(1, end) infinite;
+}
+
+@keyframes lamp {
+  0%   { background: var(--a); }
+  50%  { background: var(--b); }
+}
+
+/* One block per machine state. Patterns match the LED on the unit. */
+.status[data-state="unknown"],
+.status[data-state="disconnected"] { --a: var(--led-idle);  --b: var(--led-idle); }
+.status[data-state="booting"]      { --a: var(--led-red);   --b: var(--led-red); }
+.status[data-state="ready"]        { --a: var(--led-green); --b: var(--led-green); }
+.status[data-state="moving"]       { --a: var(--led-blue);  --b: var(--led-blue); }
+.status[data-state="estop"]        { --a: var(--led-red);   --b: var(--led-yellow); --period: 1s; }
+.status[data-state="error"]        { --a: var(--led-red);   --b: var(--led-off);    --period: 0.5s; }
+.status[data-state="shutdown"]     { --a: var(--led-red);   --b: var(--led-blue);   --period: 1s; }
+
+/* ---------- Controls ---------- */
+
+form { margin: 0; }
+
+fieldset {
+  margin: 0;
+  padding: 1.25rem;
+  border: 0;
+  min-width: 0;
+  display: grid;
+  gap: 1.25rem;
+}
+
+fieldset:disabled { opacity: 0.45; }
+
+.field { display: grid; gap: 0.5rem; min-width: 0; }
+.field[hidden] { display: none; }
+
+.label { font-weight: 600; font-size: 1rem; }
+
+/* Direction toggle */
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "icon short" "icon long";
+  column-gap: 0.75rem;
+  align-items: center;
+  min-height: 4.25rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--panel);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.segmented label + input + label { border-left: 2px solid var(--ink); }
+
+.segmented svg {
+  grid-area: icon;
+  width: 1.75rem; height: 1.75rem;
+  fill: none; stroke: currentColor; stroke-width: 2.25;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.segmented svg.mirror { transform: scaleX(-1); }
+
+.dir-short { grid-area: short; font-size: 1.375rem; font-weight: 800; line-height: 1.1; }
+.dir-long  { grid-area: long;  font-size: 0.8125rem; line-height: 1.15; opacity: 0.8; }
+
+.segmented input:checked + label { background: var(--ink); color: var(--panel); }
+.segmented input:focus-visible + label { outline: 3px solid var(--focus); outline-offset: -5px; }
+
+/* Angle */
+.angle-wrap { position: relative; }
+
+#angle {
+  width: 100%;
+  height: 4.5rem;
+  padding: 0 3rem 0 1rem;
+  font: inherit;
+  font-size: 2.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: #fff;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+#angle::-webkit-outer-spin-button,
+#angle::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#angle::placeholder { color: var(--rule); }
+#angle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+#angle[aria-invalid="true"] { border-color: var(--led-red); }
+
+.unit {
+  position: absolute;
+  right: 1rem; top: 50%;
+  transform: translateY(-50%);
+  font-size: 2rem; font-weight: 700;
+  color: var(--steel);
+  pointer-events: none;
+}
+
+.hint { margin: 0; min-height: 1.4em; color: var(--led-red); font-weight: 600; }
+
+/* Presets: wraps onto as many rows as Ed needs. */
+.presets { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.preset {
+  flex: 1 1 5rem;
+  min-height: 3.25rem;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 1.125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--panel);
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.preset:active { background: var(--rule); }
+.preset:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* Rotate */
+.go {
+  width: 100%;
+  min-height: 4.5rem;
+  font: inherit;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--panel);
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.go:active { background: #2e383c; }
+.go:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.go:disabled { cursor: not-allowed; }
+
+/* ---------- Footer & toast ---------- */
+
+.foot {
+  padding: 0.75rem 1.25rem;
+  border-top: 2px solid var(--ink);
+  font-size: 0.9375rem;
+}
+.foot a { color: var(--ink); text-underline-offset: 0.2em; }
+.foot a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.toast {
+  position: fixed;
+  left: 1rem; right: 1rem;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: 1rem 1.25rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--led-red);
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.toast[hidden] { display: none; }
+
+/* ---------- Motion ---------- */
+
+/* Lamp colour still shows the state; only the flashing stops. */
+@media (prefers-reduced-motion: reduce) {
+  .lamp { animation: none; }
+}
+
+@media (min-width: 30rem) {
+  body { padding-top: 2.5rem; }
+}

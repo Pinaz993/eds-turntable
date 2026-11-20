@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#d9dcd6">
+  <title>Turntable</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="panel">
+
+    <!-- Mirrors the physical status LED. Text and lamp are driven by control.js. -->
+    <header class="status" id="status" data-state="unknown" role="status" aria-live="polite">
+      <span class="lamp" aria-hidden="true"></span>
+      <div class="status-text">
+        <h1 id="status-title">Checking machine</h1>
+        <p id="status-detail">Asking the turntable for its status.</p>
+      </div>
+    </header>
+
+    <form id="move-form" novalidate>
+      <!-- Everything in here is switched off unless the machine reports "ready". -->
+      <fieldset id="controls" disabled>
+        <legend class="sr-only">Move controls</legend>
+
+        <div class="field">
+          <span class="label" id="direction-label">Direction</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="direction-label">
+            <input type="radio" name="direction" id="dir-cw" value="CW" checked>
+            <label for="dir-cw">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+              <span class="dir-short">CW</span>
+              <span class="dir-long">Clockwise</span>
+            </label>
+            <input type="radio" name="direction" id="dir-ccw" value="CCW">
+            <label for="dir-ccw">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="mirror"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+              <span class="dir-short">CCW</span>
+              <span class="dir-long">Counter-clockwise</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label" for="angle">Angle</label>
+          <div class="angle-wrap">
+            <input id="angle" name="angle" type="number" inputmode="decimal"
+                   min="0" max="360" step="any" placeholder="0"
+                   autocomplete="off" aria-describedby="angle-hint">
+            <span class="unit" aria-hidden="true">°</span>
+          </div>
+          <p class="hint" id="angle-hint" role="alert"></p>
+        </div>
+
+        <!-- Quick-pick angles. Hidden until static/presets.js defines at least one. -->
+        <div class="field" id="presets-field" hidden>
+          <span class="label" id="presets-label">Presets</span>
+          <div class="presets" id="presets" role="group" aria-labelledby="presets-label"></div>
+        </div>
+
+        <button type="submit" id="go" class="go">Rotate</button>
+      </fieldset>
+    </form>
+
+    <footer class="foot"><a href="{{ url_for('docs') }}">How this works</a></footer>
+  </main>
+
+  <div class="toast" id="toast" role="alert" hidden></div>
+
+  <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='presets.js') }}"></script>
+  <script src="{{ url_for('static', filename='control.js') }}"></script>
+</body>
+</html>
