@@ -4,6 +4,7 @@
 
 import linuxcnc
 import time
+import traceback
 from typing import Callable, cast
 import threading
 
@@ -426,31 +427,44 @@ class LinuxCNCBridge:
             The direction of movement. Must be 'CW' or 'CCW'.
             CCW moves are negated before sending.
         """
-        signed = degrees if direction == 'CW' else -degrees
-        # Fixed-point on purpose: Python would write tiny values as e.g. 1e-05, which G-code can't parse.
-        self.command.mdi(f'G91 G0 A{signed:.4f}')
+        try:
+            signed = degrees if direction == 'CW' else -degrees
+            # Fixed-point on purpose: Python would write tiny values as e.g. 1e-05, which G-code can't parse.
+            self.command.mdi(f'G91 G0 A{signed:.4f}')
 
-        result = self._wait_for_move()
-        if result == self.OUTCOME_TIMED_OUT:
-            self.on_error('Move timed out')
-            return
-        if result == self.OUTCOME_ABORTED:
-            # Cut short by an e-stop. Don't read the error channel: whatever is in it is e-stop
-            # noise, and the recovery sequence drains it. Don't report completion either.
-            self._busy = False
-            if self.on_move_aborted:
-                self.on_move_aborted()
-            return
-
-        error = self.errors.poll()
-        if error:
-            error_type, error_msg = error
-            if error_type in (linuxcnc.NML_ERROR, linuxcnc.OPERATOR_ERROR):
-                self.on_error(error_msg)
+            result = self._wait_for_move()
+            if result == self.OUTCOME_TIMED_OUT:
+                self.on_error('Move timed out')
+                return
+            if result == self.OUTCOME_ABORTED:
+                # Cut short by an e-stop. Don't read the error channel: whatever is in it is e-stop
+                # noise, and the recovery sequence drains it. Don't report completion either.
+                self.clear_busy()
+                if self.on_move_aborted:
+                    self.on_move_aborted()
                 return
 
-        self._busy = False
-        self.on_move_complete()
+            error = self.errors.poll()
+            if error:
+                error_type, error_msg = error
+                if error_type in (linuxcnc.NML_ERROR, linuxcnc.OPERATOR_ERROR):
+                    self.on_error(error_msg)
+                    return
+
+            # Clear before announcing, so the state the callback publishes is "ready", not "moving".
+            self.clear_busy()
+            self.on_move_complete()
+        except Exception as exc:
+            # linuxcnc.error, a lost NML connection, or a callback that blew up. Without this the
+            # thread would die with the busy flag set and the UI would show "Moving" forever.
+            traceback.print_exc()
+            # Clear first: if on_error() itself fails, the flag is still released (see `finally`).
+            self.clear_busy()
+            self.on_error(f'Move failed: {exc}')
+        finally:
+            # Backstop: however this thread exits, it must never leave the bridge marked busy.
+            # Harmless on the paths that already cleared it.
+            self.clear_busy()
     # End send_move()
 
     ### State ###

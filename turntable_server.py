@@ -12,6 +12,7 @@ import socket
 import struct
 import subprocess
 import threading
+import traceback
 import linuxcnc
 from flask import Flask, render_template, request, abort
 from flask_socketio import SocketIO, emit
@@ -292,6 +293,28 @@ def on_error(message: str, recoverable: bool = True):
     # Set the LED and inform all clients that the machine cannot accept further commands without a restart.
     _publish_state()
 # End on_error()
+
+# Safety net for every thread started through `threading` (socketio's background tasks included).
+# Without it, an uncaught exception prints a traceback to stderr at best, and the thread just stops.
+# If that thread was a move, the UI would sit on "Moving" forever. If it was the e-stop monitor or the
+# shutdown-button listener, a safety function would quietly stop working.
+# Installed in the entry point below. It doesn't cover the main thread, or exceptions that a framework
+# catches and handles itself (e.g. Flask error handlers).
+def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
+    # A thread that raises SystemExit is just leaving. The default hook ignores it too.
+    if args.exc_type is SystemExit:
+        return
+    name = args.thread.name if args.thread else 'unknown'
+    print(f"[ERROR] Uncaught exception in thread '{name}':", flush=True)
+    traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+    try:
+        # Not recoverable: a thread that died unexpectedly may be the e-stop monitor itself,
+        # in which case nothing is left to notice an e-stop press, so "clearable with e-stop" would be a lie.
+        on_error(f"Thread '{name}' crashed: {args.exc_value}", recoverable=False)
+    except Exception:
+        # A hook that raises is no safety net. Log it and carry on.
+        traceback.print_exc()
+# End _thread_excepthook()
 
 # ---------------------------------------------------------------------------
 # E-stop monitor
@@ -585,6 +608,8 @@ def _startup():
 #END _startup()
 
 if __name__ == '__main__':
+    # No thread should be able to die silently from here on.
+    threading.excepthook = _thread_excepthook
     # Set the LED to communicate that the machine is setting up
     led.set_status('booting')
     # Set up the bridge
