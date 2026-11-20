@@ -5,7 +5,7 @@
 import linuxcnc
 import time
 from typing import Callable, cast
-import eventlet.semaphore
+import threading
 
 
 class SafeStatus:
@@ -51,6 +51,10 @@ class SafeStatus:
     def homed(self):
         return self._stat.homed
 
+    @property
+    def motion_mode(self) -> int:
+        return self._stat.motion_mode
+
 
 class SafeCommand:
     """An explicit, thread-safe wrapper for linuxcnc.command."""
@@ -74,6 +78,10 @@ class SafeCommand:
         with self._lock:
             self._cmd.mdi(command_string)
 
+    def teleop_enable(self, enabled: bool) -> None:
+        with self._lock:
+            self._cmd.teleop_enable(enabled)
+
 
 class SafeErrors:
     """An explicit, thread-safe wrapper for linuxcnc.error_channel."""
@@ -93,8 +101,8 @@ class LinuxCNCBridge:
     status polling. Exposes callbacks for the Flask-SocketIO layer to hook
     into for WebSocket event emission.
 
-    All LinuxCNC objects are wrapped in SafeLinuxCNC to serialize NML bus access
-    across all eventlet green threads. The semaphore is exposed as bridge.lock so
+    All LinuxCNC objects are wrapped in the Safe* classes above to serialize NML bus access
+    across all threads. The semaphore is exposed as bridge.lock so
     external code (e.g. the e-stop monitor in turntable_server.py) can wrap its own
     linuxcnc objects with the same lock, ensuring system-wide NML serialization.
 
@@ -111,8 +119,11 @@ class LinuxCNCBridge:
     on_move_complete : Callable
         Called when a move command has finished executing.
     on_error : Callable
-        Called when an unrecoverable error occurs.
-    _lock : eventlet.semaphore.Semaphore
+        Called when an error occurs that stops the machine accepting commands.
+    on_move_aborted : Callable, optional
+        Called when a move is cut short by an e-stop or loss of drive power. NOT followed
+        by on_move_complete.
+    _lock : threading.Lock
         The shared NML access semaphore. Expose to external code that needs to
         wrap its own linuxcnc objects with the same serialization guarantee.
     """
@@ -155,13 +166,17 @@ class LinuxCNCBridge:
         on_ready:         Callable,
         on_move_complete: Callable,
         on_error:         Callable,
+        on_move_aborted:  Callable | None = None,
     ) -> None:
         self.on_ready         = on_ready
         self.on_move_complete = on_move_complete
         self.on_error         = on_error
+        # Called when a move is cut short by an e-stop or loss of drive power.
+        # Optional: with none set, an aborted move simply ends quietly.
+        self.on_move_aborted  = on_move_aborted
         # Single semaphore shared across all NML objects in this bridge, and exposed
-        # as bridge.lock for external callers (e.g. the e-stop monitor green thread).
-        self._lock     = eventlet.semaphore.Semaphore()
+        # as bridge.lock for external callers (e.g. the e-stop monitor thread).
+        self._lock     = threading.Lock()
         self.command = SafeCommand(self._lock)
         self.status = SafeStatus(self._lock)
         self.errors = SafeErrors(self._lock)
@@ -175,8 +190,8 @@ class LinuxCNCBridge:
         Polls LinuxCNC until a condition is met or a timeout expires.
 
         Each call to self.status.poll() acquires and releases the NML semaphore
-        automatically via SafeLinuxCNC. The sleep between polls happens outside the
-        lock so other green threads can access the NML bus while we wait.
+        automatically via the Safe* wrappers. The sleep between polls happens outside the
+        lock so other threads can access the NML bus while we wait.
 
         Parameters
         ----------
@@ -219,34 +234,49 @@ class LinuxCNCBridge:
         return False
     # End poll_until()
 
-    def _wait_for_move(self) -> bool:
+    # Possible outcomes of _wait_for_move().
+    OUTCOME_COMPLETE  = 'complete'
+    OUTCOME_ABORTED   = 'aborted'
+    OUTCOME_TIMED_OUT = 'timeout'
+
+    def _machine_stopped(self) -> bool:
+        """True if the e-stop is engaged or the drives are off (which kills any move in progress)."""
+        return bool(self.status.estop) or not self.status.enabled
+    # End _machine_stopped()
+
+    def _wait_for_move(self) -> str:
         """
         Waits for the currently executing move to finish.
 
         Polls first for the move to start (so we do not race past it on a fast machine),
-        then for it to complete. Uses MOVE_TIMEOUT for the completion wait.
+        then for it to end. An e-stop or loss of drive power ends the wait immediately:
+        the move is dead, and what LinuxCNC reports afterwards says nothing about whether
+        it finished.
 
         Returns
         -------
-        bool
-            True if the move completed cleanly. False if either wait timed out.
+        str
+            OUTCOME_COMPLETE if the move finished cleanly, OUTCOME_ABORTED if the machine was
+            e-stopped or powered off, OUTCOME_TIMED_OUT if the wait ran out.
         """
-        # How to ask if we are currently executing a move
-        move_started = lambda: not self.status.inpos or self.status.queue > 0
+        # How to ask if we are currently executing a move (or if it has been cut off)
+        move_started = lambda: (not self.status.inpos or self.status.queue > 0
+                                or self._machine_stopped())
         # Wait until the move starts before polling for completion, or up to 5 seconds.
-        if not self.poll_until(move_started, timeout=5.0, ):
-            # Move may have completed between polls — not necessarily an error, keep going.
-            pass
-        #END if
+        # Running out of time here is not an error: a short move may already be over.
+        self.poll_until(move_started, timeout=5.0)
 
-        # How to ask if the move has finished
-        move_finished = lambda: (
-                self.status.inpos and
-                self.status.interp_state == linuxcnc.INTERP_IDLE and
-                self.status.queue == 0
+        # How to ask if the move is over, one way or another.
+        move_over = lambda: (
+                self._machine_stopped() or (
+                    self.status.inpos and
+                    self.status.interp_state == linuxcnc.INTERP_IDLE and
+                    self.status.queue == 0
+                )
             )
-        # Wait until the move is fully finished, or until we run out of time. Return the result.
-        return self.poll_until(move_finished, timeout=self.MOVE_TIMEOUT)
+        if not self.poll_until(move_over, timeout=self.MOVE_TIMEOUT):
+            return self.OUTCOME_TIMED_OUT
+        return self.OUTCOME_ABORTED if self._machine_stopped() else self.OUTCOME_COMPLETE
     # End _wait_for_move()
 
     ### Startup ###
@@ -260,7 +290,7 @@ class LinuxCNCBridge:
 
         The former ESTOP cycle (force STATE_ESTOP before STATE_ESTOP_RESET) has been
         removed. It was a workaround for torn-read corruption caused by concurrent NML
-        access. With SafeLinuxCNC serializing all NML traffic, torn reads no longer occur
+        access. With the Safe* wrappers serializing all NML traffic, torn reads no longer occur
         and the state machine stays consistent without the brute-force cycle.
 
         Raises
@@ -294,9 +324,15 @@ class LinuxCNCBridge:
         # Clear ESTOP. LinuxCNC starts in STATE_ESTOP; this moves it to STATE_ESTOP_RESET.
         print("Clearing ESTOP...", flush=True)
         self.command.state(linuxcnc.STATE_ESTOP_RESET)
-        if not self.poll_until(lambda: self.status.estop == 0):
-            raise RuntimeError('Failed to clear ESTOP before timeout')
-        print("ESTOP cleared", flush=True)
+        if not self.poll_until(lambda: self.status.estop == 0, timeout=5.0):
+            # Instead of crashing, check if we are still hard-estopped by hardware
+            if self.status.estop:
+                print("[INFO] Hardware ESTOP is currently active. Pausing startup sequence until cleared.", flush=True)
+                # Exit early but cleanly. We don't turn on drives or go to MDI yet.
+                return
+            else:
+                raise RuntimeError('Failed to clear ESTOP due to an unexpected system error')
+        print("ESTOP cleared")
 
         # Enable the machine (power on drives/amplifiers).
         print("Enabling machine...", flush=True)
@@ -311,6 +347,15 @@ class LinuxCNCBridge:
         if not self.poll_until(lambda: self.status.task_mode == linuxcnc.MODE_MANUAL):
             raise RuntimeError('Failed to set machine to manual mode before timeout')
         print("Manual mode confirmed", flush=True)
+
+        # LinuxCNC only accepts a home command in joint mode. A joint that is still homed from
+        # before an e-stop leaves motion in teleop mode, and `home` is then refused ("must be in
+        # joint mode to home") with nothing but a message in the error channel. Ask for joint
+        # mode first. Not fatal if it doesn't take: the home below reports the real problem.
+        print("Switching to joint mode...", flush=True)
+        self.command.teleop_enable(False)
+        if not self.poll_until(lambda: self.status.motion_mode == linuxcnc.TRAJ_MODE_FREE, timeout=3.0):
+            print("[WARNING] Motion did not report joint mode; trying to home anyway.", flush=True)
 
         # Home joint 0 (the A axis).
         print("Homing joint 0...", flush=True)
@@ -355,7 +400,7 @@ class LinuxCNCBridge:
     def startup(self) -> None:
         """
         Runs the full startup sequence to bring the machine to a state where it can accept
-        MDI commands. Intended to be called once from a background green thread at startup.
+        MDI commands. Intended to be called once from a background thread at startup.
         Calls on_ready() on success, or on_error() if an unrecoverable error occurs.
         """
         try:
@@ -371,7 +416,7 @@ class LinuxCNCBridge:
     def send_move(self, degrees: float, direction: str) -> None:
         """
         Sends a relative MDI move command to LinuxCNC and polls for completion.
-        Intended to be called from a background green thread via start_background_task().
+        Intended to be called from a background thread via start_background_task().
 
         Parameters
         ----------
@@ -382,10 +427,19 @@ class LinuxCNCBridge:
             CCW moves are negated before sending.
         """
         signed = degrees if direction == 'CW' else -degrees
-        self.command.mdi(f'G91 G0 A{signed}')
+        # Fixed-point on purpose: Python would write tiny values as e.g. 1e-05, which G-code can't parse.
+        self.command.mdi(f'G91 G0 A{signed:.4f}')
 
-        if not self._wait_for_move():
+        result = self._wait_for_move()
+        if result == self.OUTCOME_TIMED_OUT:
             self.on_error('Move timed out')
+            return
+        if result == self.OUTCOME_ABORTED:
+            # Cut short by an e-stop. Don't read the error channel: whatever is in it is e-stop
+            # noise, and the recovery sequence drains it. Don't report completion either.
+            self._busy = False
+            if self.on_move_aborted:
+                self.on_move_aborted()
             return
 
         error = self.errors.poll()
@@ -407,10 +461,18 @@ class LinuxCNCBridge:
         return self._busy
     # End is_busy
 
+    def clear_busy(self) -> None:
+        """
+        Marks the bridge as not busy. Called by turntable_server.py when an e-stop kills
+        whatever move was running, so a stuck flag can't outlive the move.
+        """
+        self._busy = False
+    # End clear_busy()
+
     def set_busy(self) -> None:
         """
         Marks the bridge as busy. Called by turntable_server.py before starting a move
-        in a background green thread.
+        in a background thread.
         """
         self._busy = True
     # End set_busy()

@@ -9,6 +9,12 @@ LinuxCNC to control a single stepper motor via a web interface served at `turnta
 Ed scans a QR code, opens the control panel on his device, and commands the turntable to
 rotate by a specified number of degrees in a specified direction.
 
+**Status:** hardware, LinuxCNC config, LED, shutdown button, the server
+(`turntable_server.py` + `lcnc_bridge.py`), and the control panel (`control.html`,
+`control.js`, `style.css`, `presets.js`) are complete. The server and client logic were
+tested against stubbed hardware, not yet on the Pi or in a real browser. Remaining:
+`docs.html` (the control panel already links to `/docs`, which errors until it exists).
+
 ---
 
 ## Hardware
@@ -59,10 +65,15 @@ rotate by a specified number of degrees in a specified direction.
 - LinuxCNC 2.9.8
 - Python 3.13
 - Flask 3.1.3
-- Flask-SocketIO 5.6.1
-- eventlet 0.40.4
+- Flask-SocketIO 5.6.1 (python-socketio 5.16.2, python-engineio 4.13.2)
+- simple-websocket 1.1.0 (WebSocket support for Flask-SocketIO's threading mode; pinned via
+  `pyproject.toml` / `uv.lock`). **Not eventlet**: it is deprecated upstream and was dropped.
 - gpiozero 2.0.1
 - linuxcnc Python module (system package)
+- Socket.IO **client** 4.8.1, vendored at `static/socket.io.min.js` (MIT licence in
+  `static/socket.io.LICENSE`). Served locally rather than from a CDN so the unit works
+  without internet and the library version is fixed. Flask-SocketIO does not serve the
+  client itself. Reference it as `<script src="/static/socket.io.min.js"></script>`.
 
 ---
 
@@ -71,93 +82,32 @@ rotate by a specified number of degrees in a specified direction.
 
 ```
 turntable/
-├── app.py                  # Flask-SocketIO server (NOT YET WRITTEN)
+├── turntable_server.py     # Flask-SocketIO server (COMPLETE)
 ├── lcnc_bridge.py          # LinuxCNC Python API bridge (COMPLETE)
 ├── led.py                  # RGB LED status manager (COMPLETE)
 ├── shutdown_button.py      # Power button monitor (COMPLETE)
 ├── templates/
-│   ├── control.html        # Control panel (NOT YET WRITTEN)
+│   ├── control.html        # Control panel (COMPLETE)
 │   └── docs.html           # Documentation page (NOT YET WRITTEN)
 ├── static/
-│   ├── control.js          # WebSocket logic (NOT YET WRITTEN)
-│   └── style.css           # Styles (NOT YET WRITTEN)
+│   ├── socket.io.min.js    # Socket.IO client 4.8.1 (COMPLETE, vendored)
+│   ├── socket.io.LICENSE   # MIT licence for the above
+│   ├── control.js          # WebSocket + UI logic (COMPLETE)
+│   ├── presets.js          # Quick-pick angles, empty for now (COMPLETE)
+│   └── style.css           # Styles (COMPLETE)
 ├── turntable.ini           # LinuxCNC configuration (COMPLETE)
 └── turntable.hal           # HAL configuration (COMPLETE)
 ```
 
 ## Systemd Services
+All unit files live in `/etc/systemd/system/` and are complete:
 
-### /etc/systemd/system/linuxcnc.service (complete)
-```ini
-[Unit]
-Description=LinuxCNC Machine Controller
-After=network.target
-
-[Service]
-Type=simple
-User=turntable
-WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
-ExecStart=/bin/bash -c 'echo "" | /usr/bin/linuxcnc /home/turntable/linuxcnc/configs/turntable/turntable.ini'
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### /etc/systemd/system/turntable.service (NOT YET CREATED)
-```ini
-[Unit]
-Description=Turntable Web Controller
-After=network.target linuxcnc.service
-Requires=linuxcnc.service
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
-ExecStart=/usr/bin/python3 /home/turntable/linuxcnc/configs/turntable/app.py
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### /etc/systemd/system/shutdown-button.service (complete)
-```ini
-[Unit]
-Description=Power Button Monitor
-After=multi-user.target
-
-[Service]
-Type=simple
-User=turntable
-WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
-ExecStart=/usr/bin/python3 /home/turntable/linuxcnc/configs/turntable/shutdown_button.py
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### /etc/systemd/system/wifi-powersave-off.service (complete)
-```ini
-[Unit]
-Description=Disable WiFi power saving
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/sbin/iw wlan0 set power_save off
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-```
-
----
+| Unit                        | Runs                  | As       | Notes                                              |
+|-----------------------------|-----------------------|----------|----------------------------------------------------|
+| `linuxcnc.service`          | LinuxCNC + `turntable.ini` | turntable | `Restart=on-failure`                          |
+| `turntable-server.service`  | `turntable_server.py` | root     | Root required for port 80. `Requires=linuxcnc.service` |
+| `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends SIGTERM to the server, or shuts down directly if the server isn't running |
+| `wifi-powersave-off.service`| `iw wlan0 set power_save off` | root | oneshot                                      |
 
 ## Firewall
 Port 5007 (linuxcncrsh) restricted to loopback only:
@@ -169,87 +119,187 @@ Managed by `iptables-persistent`.
 
 ---
 
-## What Needs To Be Written Next
+## Server (`turntable_server.py`)
 
-### app.py
-The main Flask-SocketIO application. Requirements:
+Listens on `0.0.0.0:80`. Runs in Flask-SocketIO's plain `threading` mode on Werkzeug's
+built-in server (`allow_unsafe_werkzeug=True`, required under systemd; acceptable for a few
+clients on a private LAN behind the subnet filter; gunicorn with one worker and several
+threads is the step up if that ever changes). Every connection, background task and timer
+is a real OS thread, so blocking calls like `time.sleep` are fine and nothing is
+monkey-patched. Shared state is protected by locks: the bridge's NML lock (one
+`threading.Lock` for all LinuxCNC access), `_publish_lock` (state announcements go out in
+order), and `_move_lock` (checking "ready" and claiming the machine is one atomic step, so
+simultaneous commands from several clients can't both be accepted).
+`SECRET_KEY` is random per boot (`secrets.token_hex`), so it is never in source control.
 
-**Startup sequence:**
-1. Instantiate `StatusLED` and set to `booting`
-2. Instantiate `LinuxCNCBridge` with callbacks
-3. Start `bridge.startup()` in a background thread via `socketio.start_background_task()`
-4. `on_ready` callback: set LED to `ready`
-5. `on_error` callback: set LED to `system_error`, emit `machine_status` error to all clients
+### Startup
+1. `StatusLED` created; LED set to `booting`.
+2. `LinuxCNCBridge` created with `on_ready`, `on_move_complete`, `on_error`, `on_move_aborted` callbacks.
+3. One background thread (`_startup`) runs, in order:
+   1. `_init_network()` — reads eth0's address and netmask from the kernel and sets
+      `ALLOWED_NETWORK`. Retries 10× at 3 s intervals; on failure calls `on_error`.
+   2. `bridge.startup()` — ESTOP reset → enable → manual mode → **joint mode** → home joint 0
+      → MDI mode, then `on_ready()`. (The old forced ESTOP-cycle workaround is gone; all NML
+      access is now serialised by one lock in the bridge.) On failure → `on_error`.
+   3. `_monitor_estop` thread started. Skipped only if the failure can't be cleared by an
+      e-stop (see "Errors" below).
+4. The web server accepts connections throughout. Until step 3.i finishes, everything is
+   refused (fails closed).
 
-**Routes:**
-- `GET /` → serve `control.html`
-- `GET /docs` → serve `docs.html`
+If the hardware e-stop is engaged at boot, `startup_sequence()` returns early without
+raising; `on_ready` detects this and the machine reports `estop` instead of `ready`.
 
-**Subnet filter:**
-- Configurable at top of file (currently `172.17.1.` — will change at installation)
-- Reject requests from outside local subnet with 403
+### Subnet filter
+The allowed network is **detected at runtime from eth0** (address + netmask), not
+configured. Any client outside it gets 403 on HTTP, and WebSocket connections from
+outside are refused in the `connect` handler. Flask's `before_request` does not see
+Socket.IO traffic, so both layers share one helper, `_client_allowed()`.
+Everything fails closed until the network has been resolved.
 
-**WebSocket events:**
+### Machine state
+The server holds the truth and derives everything from it via `_current_state()`.
+The LED, `machine_status` broadcasts, and `get_state` replies all come from the same
+function, so they cannot disagree. Highest priority first:
 
-Incoming `move_command`:
-```json
-{"degrees": 210, "direction": "CCW"}
-```
-- Sanitize: degrees must be numeric, 0 < x ≤ 360; direction must be "CW" or "CCW"
-- If invalid: emit `move_error` to sender only, flash LED `command_rejected`
-- If busy: emit `move_error` to sender only, flash LED `command_rejected`
-- If valid: set busy, set LED `moving`, emit `move_started` to all,
-  start `bridge.send_move()` in background thread
+| State      | Meaning                                              | LED                 | Accepts moves |
+|------------|------------------------------------------------------|---------------------|---------------|
+| `shutdown` | Shutdown in progress                                 | red/blue alternating | no           |
+| `error`    | Machine can't take commands; `message` and `recoverable` fields included. See "Errors" | red flashing | no |
+| `estop`    | E-stop engaged                                       | red/yellow alternating | no         |
+| `booting`  | Starting up, or recovering after an e-stop clear     | solid red           | no            |
+| `moving`   | A move is executing                                  | solid blue          | no            |
+| `ready`    | Idle                                                 | solid green         | yes           |
 
-Outgoing events:
-- `move_error` → requesting client only: `{"message": "..."}`
-- `move_started` → all clients: `{"degrees": 210, "direction": "CCW"}`
-- `move_complete` → all clients: `{}`
-- `machine_status` → all clients: `{"state": "ready"|"moving"|"error"|"estop"}`
+The yellow-flashing `command_rejected` LED status is transient (2 s), then the LED returns
+to whatever the current state calls for.
 
-**E-stop monitoring:**
-- Background thread polls `linuxcnc.stat()` for estop state changes
-- On estop detected: set LED `estop_active`, emit `machine_status` estop to all clients
-- On estop cleared: run `bridge._startup_sequence()` again to re-enable machine,
-  set LED `ready`, emit `machine_status` ready to all clients
-- Important: when E-stop is pressed, `s.task_state` goes to `STATE_OFF`.
-  Recovery requires the full startup sequence including the ESTOP cycle quirk.
+### WebSocket protocol
 
-**Move completion callback:**
-- Set LED to `ready`
-- Emit `move_complete` to all clients
+**Client → server**
 
-**Flask config:**
-- `SECRET_KEY`: set to a random string
-    - not to be distributed via Git when released
-- `async_mode`: `eventlet`
-- Host: `0.0.0.0`, port `80`
-- Run as root (required for port 80)
+| Event          | Payload                                  | Behaviour |
+|----------------|------------------------------------------|-----------|
+| `get_state`    | none                                     | Server replies with `machine_status` to the sender only. |
+| `move_command` | `{"degrees": 210, "direction": "CCW"}`   | Validated, then executed. See below. |
 
-### control.html / control.js
-Single page control panel:
-- Direction toggle switch (CW/CCW)
-- Numeric input for degrees (positive only, 0 < x ≤ 360)
-- Execute button
-- Status indicator showing machine state
-- Error toast for rejected commands (sender only)
-- UI disabled while move is in progress or machine is in estop
+**Server → client**
 
-### docs.html
+| Event            | Audience     | Payload |
+|------------------|--------------|---------|
+| `machine_status` | all clients (state changes), or sender only (reply to `get_state`) | `{"state": "<state>"}`; `error` adds `"message"` and `"recoverable"` (bool) |
+| `move_started`   | all          | `{"degrees": 210, "direction": "CCW"}` |
+| `move_complete`  | all          | `{}` |
+| `move_error`     | sender only  | `{"message": "..."}` |
+
+On a successful move the order is `machine_status: moving`, `move_started`, then later
+`machine_status: ready`, `move_complete`.
+
+**`move_command` validation** (any failure → `move_error` to the sender, LED flashes
+`command_rejected`, nothing is sent to LinuxCNC):
+- Payload must be a JSON object (a missing payload is also rejected).
+- `degrees` must be numeric (numeric strings are accepted; booleans are not), finite,
+  and `0 < degrees ≤ 360`. NaN, ±infinity, zero, negatives, and >360 are rejected.
+- `direction` must be exactly `"CW"` or `"CCW"`.
+- Machine state must be `ready`. While `moving` the message is "Machine is busy";
+  in any other state it is "Machine is not ready (state: …)". The UI disables itself
+  in these states, but the server is what actually enforces it.
+
+CCW moves are sent to LinuxCNC as negative degrees, formatted fixed-point
+(`G91 G0 A-210.0000`) so tiny values never become exponent notation.
+
+### E-stop handling
+`_monitor_estop` polls LinuxCNC every 0.25 s.
+- E-stop engaged → the bridge's busy flag is cleared (any move in progress is dead),
+  recoverable errors are cleared (below), state `estop`, LED + broadcast.
+- E-stop cleared → state `booting`, full `bridge.startup_sequence()` rerun, then `ready`
+  (or `error` if that fails).
+- A move cut short by an e-stop is detected by the bridge (`_wait_for_move` returns
+  `aborted` as soon as the e-stop is engaged or the drives are off). It does **not** send
+  `move_complete` and does not read the LinuxCNC error channel; `on_move_aborted` just
+  re-announces state. There is no separate client event for it; clients learn from the
+  `estop` state. (A `move_aborted` event would be an easy addition.)
+- Homing after an e-stop: the joint stays homed, which leaves LinuxCNC's motion in teleop
+  mode, and `home` is then refused ("must be in joint mode to home"). The startup sequence
+  calls `teleop_enable(False)` and waits for joint mode first.
+
+### Errors
+`on_error(message, recoverable=True)`. Only the first error is kept; later ones are ignored.
+- **Recoverable** (default): faults in the machine, such as a refused command or a failed
+  move. Pressing the e-stop **clears** the error (like a fault reset on a real machine);
+  releasing it reruns the full startup sequence. If the fault is still there, the error
+  returns. The e-stop monitor therefore keeps running after a failed startup.
+- **Not recoverable**: no network address on eth0. An e-stop can't help; restart.
+- The page says which applies: "Press and release the e-stop to try again" or "Restart the
+  turntable".
+- Errors where LinuxCNC itself is unreachable (NML never came up) can't be cleared this
+  way, since the e-stop can't be read either. Restart.
+
+### Shutdown
+SIGTERM/SIGINT (systemd stop, or the power button via `shutdown_button.py`) hands off to
+a background thread: state `shutdown` (LED + broadcast), wait 3 s for sockets to flush,
+`sudo shutdown -h now`. A second signal is ignored.
+
+---
+
+## Web Client (`templates/control.html`, `static/control.js`, `static/style.css`, `static/presets.js`)
+
+Mobile-first, no external resources (system fonts, vendored Socket.IO). Script order in
+the page: `socket.io.min.js`, `presets.js`, `control.js`.
+
+### Connection and state handling
+The client never assumes a state it hasn't been told.
+- Starts in **unknown**, all controls disabled.
+- On every Socket.IO `connect` (including reconnects) it resets to unknown and emits
+  `get_state`; it retries every 3 s while still unknown.
+- `disconnect` / `connect_error` → client-only **disconnected** state.
+- Only `ready` enables the controls. Any unrecognised state is treated as unknown.
+- After sending a move the controls lock until the server answers (3 s safety timeout).
+- A client that joins mid-move shows "A move is in progress"; it only learns the angle
+  and direction for moves it sees start.
+
+### Layout
+- Status banner on top with a lamp that mirrors the physical LED (same colours and flash
+  patterns; flashing stops under `prefers-reduced-motion`, colour remains), a state title,
+  and a detail line (last move, current move, error message, or what to do).
+- Direction toggle (CW / CCW), angle input (number, `0 < x ≤ 360`, same rule as the server,
+  inline error text), presets row, Rotate button, link to `/docs`.
+- Error toast for `move_error` (sender only); tap to dismiss, auto-hides after 5 s.
+
+### Presets
+Edit `static/presets.js` — no other file needs touching. Each entry is
+`{ degrees, direction?, label? }`. Tapping a preset fills the angle (and direction, if given)
+but never starts a move. The row is hidden while the list is empty; invalid entries are
+skipped. Buttons wrap onto extra rows as needed.
+
+### docs.html (NOT YET WRITTEN)
 Static documentation page explaining:
 - How to use the control panel
-- What the LED colors mean
+- What the LED colours mean (table above)
 - E-stop procedure
 
 ---
 
 ## Known Issues / Notes
-- E-stop recovery requires full startup sequence rerun
+- History: an earlier version used eventlet with `monkey_patch()`; on the Pi that stalled
+  the server before it printed anything. Cause not pinned down; the move to threading mode
+  made it moot.
 - `linuxcnc` Python module loses its NML connection if LinuxCNC is restarted
-  while the Python process is running — requires app restart too
-- `FERROR = 50.0` is intentionally generous for open-loop stepper operation
-- Level shifter (Adafruit 757) works correctly once wiring was fixed —
-  no replacement needed
-- Buck converter (Mean Well, 15W) on order for permanent Pi power from 24V DIN rail supply
-- E-stop HAL line currently uses software workaround (`sets estop-in true`) —
-  physical button and pull-up resistor now wired and working, workaround should be removed
+  while the Python process is running — requires a server restart too.
+- E-stop during a move, tested on the Pi: the page goes to `estop` immediately and returns
+  to `ready` on release. A later test failed with "must be in joint mode to home"; cause and
+  fix are described under "E-stop handling" (joint mode before homing, and an interrupted move
+  no longer reads stray LinuxCNC errors). Both fixes were tested against a stubbed LinuxCNC
+  that reproduces the failure; **re-test on the Pi**, including an e-stop pressed while idle
+  and one pressed mid-move.
+- Cutting stepper power mid-move can lose steps, so the table may sit slightly off from where
+  the software thinks it is after an interrupted move. Harmless for relative moves.
+- Ctrl-C (SIGINT) on the server triggers a full system shutdown, same as SIGTERM.
+  Keep in mind during development.
+- `shutdown_button.py` takes the first `pgrep` match as the server's PID; if several
+  processes match, it falls back to a direct shutdown (no LED/client notice).
+- `FERROR = 50.0` is intentionally generous for open-loop stepper operation.
+- Level shifter (Adafruit 757) works correctly once wiring was fixed — no replacement needed.
+- Buck converter (Mean Well, 15W) on order for permanent Pi power from 24V DIN rail supply.
+- `turntable.hal` currently wires `hal_gpio.GPIO24-in` straight to
+  `iocontrol.0.emc-enable-in` (no `sets estop-in true` workaround). Confirm this is the
+  intended final state now that the physical button and pull-up are wired.

@@ -6,9 +6,11 @@ After=network.target
 Type=simple
 User=turntable
 WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
-ExecStart=/bin/bash -c 'echo "" | /usr/bin/linuxcnc /home/turntable/linuxcnc/configs/turntable/turntable.ini'
+ExecStart=/bin/bash -c 'echo "" | /usr/bin/linuxcnc -r /home/turntable/linuxcnc/configs/turntable/turntable.ini'
 Restart=on-failure
 RestartSec=5
+StandardError=journal
+StandardOutput=journal
 
 [Install]
 WantedBy=multi-user.target
