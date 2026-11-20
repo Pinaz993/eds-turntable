@@ -270,8 +270,9 @@ def on_move_complete():
 # End on_move_complete()
 
 # Called when a move is cut short by an e-stop. The bridge has already cleared its busy flag.
+# (Drives that drop out with no e-stop engaged are an error, and go to on_error() instead.)
 def on_move_aborted():
-    print("Move aborted (e-stop or drive power lost).", flush=True)
+    print("Move aborted (e-stop engaged).", flush=True)
     # No `move_complete`: the move didn't complete. Clients learn what happened from the e-stop state.
     _publish_state()
 # End on_move_aborted()
@@ -369,6 +370,15 @@ def _monitor_estop():
                 except Exception as exc:
                     # Error out the machine.
                     on_error(str(exc))
+
+            elif (_booted and not _in_estop and not _shutting_down and not _system_error
+                  and not bridge.status.enabled):
+                # Booted, no e-stop, nothing already wrong, and yet the drives are off: LinuxCNC dropped
+                # them itself (following error, drive fault). Without this the state would stay "ready"
+                # until the next move silently failed. An e-stop press-and-release re-runs startup,
+                # which re-enables the machine, so the error is recoverable.
+                # `not _system_error` also keeps this from re-logging every poll.
+                on_error("Drives disabled without an e-stop (following error or drive fault)")
 
         except (linuxcnc.error, SystemError) as exc:
             # Grab the error text.

@@ -122,8 +122,8 @@ class LinuxCNCBridge:
     on_error : Callable
         Called when an error occurs that stops the machine accepting commands.
     on_move_aborted : Callable, optional
-        Called when a move is cut short by an e-stop or loss of drive power. NOT followed
-        by on_move_complete.
+        Called when a move is cut short by an e-stop. NOT followed by on_move_complete.
+        If the drives drop out with no e-stop engaged, on_error is called instead.
     _lock : threading.Lock
         The shared NML access semaphore. Expose to external code that needs to
         wrap its own linuxcnc objects with the same serialization guarantee.
@@ -172,8 +172,8 @@ class LinuxCNCBridge:
         self.on_ready         = on_ready
         self.on_move_complete = on_move_complete
         self.on_error         = on_error
-        # Called when a move is cut short by an e-stop or loss of drive power.
-        # Optional: with none set, an aborted move simply ends quietly.
+        # Called when a move is cut short by an e-stop (drives lost with no e-stop go to on_error).
+        # Optional: with none set, an e-stop-aborted move simply ends quietly.
         self.on_move_aborted  = on_move_aborted
         # Single semaphore shared across all NML objects in this bridge, and exposed
         # as bridge.lock for external callers (e.g. the e-stop monitor thread).
@@ -440,8 +440,13 @@ class LinuxCNCBridge:
                 # Cut short by an e-stop. Don't read the error channel: whatever is in it is e-stop
                 # noise, and the recovery sequence drains it. Don't report completion either.
                 self.clear_busy()
-                if self.on_move_aborted:
-                    self.on_move_aborted()
+                if self.status.estop:
+                    if self.on_move_aborted:
+                        self.on_move_aborted()
+                else:
+                    # The drives dropped out with no e-stop: a following error or a drive fault.
+                    # Saying nothing would leave the UI showing "ready" for a machine that can't move.
+                    self.on_error('Drives disabled without an e-stop (following error or drive fault)')
                 return
 
             error = self.errors.poll()
