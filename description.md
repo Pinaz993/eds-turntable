@@ -165,6 +165,8 @@ simultaneous commands from several clients can't both be accepted).
 
 If the hardware e-stop is engaged at boot, `startup_sequence()` returns early without
 raising; `on_ready` detects this and the machine reports `estop` instead of `ready`.
+Tested on the Pi: with the e-stop pressed at power-up, the machine starts in `estop` and
+reaches `ready` once the e-stop is released.
 
 ### Subnet filter
 The allowed network is **detected at runtime from eth0** (address + netmask), not
@@ -245,9 +247,12 @@ CCW moves are sent to LinuxCNC as negative degrees, formatted fixed-point
   move. Pressing the e-stop **clears** the error (like a fault reset on a real machine);
   releasing it reruns the full startup sequence. If the fault is still there, the error
   returns. The e-stop monitor therefore keeps running after a failed startup.
-- Recoverable examples: a refused command, a failed or timed-out move, and **drives
-  disabled with no e-stop engaged** (following error or drive fault; detected by the e-stop
-  monitor while idle, and by the bridge mid-move).
+- Recoverable examples: a refused command, a failed or timed-out move, and **LinuxCNC
+  disabling the machine with no e-stop engaged** (`status.enabled` goes false; detected by
+  the e-stop monitor while idle, and by the bridge mid-move). This is LinuxCNC's own
+  enable state, not a sensor on the driver: the hardware has no feedback, so the Pi cannot
+  tell if power to the stepper driver is lost, except when the e-stop does it. The error
+  text mentions a following error or drive fault, which is a guess at the cause.
 - **Not recoverable**: no network address on eth0, LinuxCNC never reachable at startup, or a
   crashed server thread. An e-stop can't help; restart.
 - The page says which applies: "Press and release the e-stop to try again" or "Restart the
@@ -320,8 +325,12 @@ If an LED pattern or state changes, update this page too.
   to `ready` on release. A later test failed with "must be in joint mode to home"; cause and
   fix are described under "E-stop handling" (joint mode before homing, and an interrupted move
   no longer reads stray LinuxCNC errors). Both fixes were tested against a stubbed LinuxCNC
-  that reproduces the failure; **re-test on the Pi**, including an e-stop pressed while idle
-  and one pressed mid-move.
+  that reproduces the failure. Tested on the Pi since: an e-stop pressed while idle and one
+  pressed mid-move behave identically. Any move in progress is abandoned, the LED flashes
+  red/yellow, and clients are told and show the same. **Still to re-test on the Pi**:
+  releasing the e-stop and returning to `ready` after each (the joint-mode homing fix).
+- The Pi cannot detect loss of stepper driver power by any means other than the e-stop,
+  which cuts it and is read on GPIO 24.
 - Cutting stepper power mid-move can lose steps, so the table may sit slightly off from where
   the software thinks it is after an interrupted move. Harmless for relative moves.
 - `LinuxCNCBridge._play_ready_chime()` (plays a C-major arpeggio through the stepper, then
