@@ -66,8 +66,9 @@ tested against stubbed hardware, not yet on the Pi or in a real browser. Remaini
 - Python 3.13
 - Flask 3.1.3
 - Flask-SocketIO 5.6.1 (python-socketio 5.16.2, python-engineio 4.13.2)
-- simple-websocket 1.1.0 (WebSocket support for Flask-SocketIO's threading mode; pinned via
-  `pyproject.toml` / `uv.lock`). **Not eventlet**: it is deprecated upstream and was dropped.
+- simple-websocket 1.1.0 (WebSocket support for Flask-SocketIO's threading mode; minimum
+  versions declared in `pyproject.toml`, which lists only Flask, Flask-SocketIO and
+  simple-websocket; there is no lockfile in the repo). **Not eventlet**: it is deprecated upstream and was dropped.
 - gpiozero 2.0.1
 - linuxcnc Python module (system package)
 - Socket.IO **client** 4.8.1, vendored at `static/socket.io.min.js` (MIT licence in
@@ -86,6 +87,14 @@ turntable/
 ├── lcnc_bridge.py          # LinuxCNC Python API bridge (COMPLETE)
 ├── led.py                  # RGB LED status manager (COMPLETE)
 ├── shutdown_button.py      # Power button monitor (COMPLETE)
+├── pyproject.toml          # Python version + dependency minimums
+├── description.md          # This file
+├── LICENSE
+├── systemd-units/          # Copies of the unit files below (install to /etc/systemd/system/)
+│   ├── linuxcnc.service
+│   ├── turntable-server.service
+│   ├── shutdown-button.service
+│   └── wifi-powersave-off.service
 ├── templates/
 │   ├── control.html        # Control panel (COMPLETE)
 │   └── docs.html           # Documentation page (NOT YET WRITTEN)
@@ -100,12 +109,13 @@ turntable/
 ```
 
 ## Systemd Services
-All unit files live in `/etc/systemd/system/` and are complete:
+Unit files are kept in `systemd-units/` in the repo and installed to `/etc/systemd/system/`.
+All are complete:
 
 | Unit                        | Runs                  | As       | Notes                                              |
 |-----------------------------|-----------------------|----------|----------------------------------------------------|
 | `linuxcnc.service`          | LinuxCNC + `turntable.ini` | turntable | `Restart=on-failure`                          |
-| `turntable-server.service`  | `turntable_server.py` | root     | Root required for port 80. `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
+| `turntable-server.service`  | `turntable_server.py` | turntable | Port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` (not root). `RuntimeDirectory=turntable` creates `/run/turntable/` for the control socket. `TimeoutStopSec=10`. `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
 | `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends `shutdown` over `/run/turntable/control.sock`, or shuts down directly if the server isn't reachable |
 | `wifi-powersave-off.service`| `iw wlan0 set power_save off` | root | oneshot                                      |
 
@@ -133,12 +143,17 @@ simultaneous commands from several clients can't both be accepted).
 `SECRET_KEY` is random per boot (`secrets.token_hex`), so it is never in source control.
 
 ### Startup
-1. `StatusLED` created; LED set to `booting`.
-2. `LinuxCNCBridge` created with `on_ready`, `on_move_complete`, `on_error`, `on_move_aborted` callbacks.
-3. One background thread (`_startup`) runs, in order:
+1. A `threading.excepthook` is installed: a thread that dies unexpectedly raises a
+   **non-recoverable** error (it might have been the e-stop monitor).
+2. `StatusLED` created; LED set to `booting`.
+3. `LinuxCNCBridge` created with `on_ready`, `on_move_complete`, `on_error`, `on_move_aborted` callbacks.
+4. `_control_listener` thread started right away, so the shutdown button works before the
+   network or LinuxCNC are up.
+5. One background thread (`_startup`) runs, in order:
    1. `_init_network()` — reads eth0's address and netmask from the kernel and sets
       `ALLOWED_NETWORK`. Retries 10× at 3 s intervals; on failure calls `on_error`.
-   2. `bridge.startup()` — ESTOP reset → enable → manual mode → **joint mode** → home joint 0
+   2. `bridge.startup()` — retried up to 10 × 30 s if LinuxCNC isn't reachable yet, then
+      ESTOP reset → enable → manual mode → **joint mode** → home joint 0
       → MDI mode, then `on_ready()`. (The old forced ESTOP-cycle workaround is gone; all NML
       access is now serialised by one lock in the bridge.) On failure → `on_error`.
    3. `_monitor_estop` thread started. Skipped only if the failure can't be cleared by an
@@ -166,7 +181,7 @@ function, so they cannot disagree. Highest priority first:
 | `shutdown` | Shutdown in progress                                 | red/blue alternating | no           |
 | `error`    | Machine can't take commands; `message` and `recoverable` fields included. See "Errors" | red flashing | no |
 | `estop`    | E-stop engaged                                       | red/yellow alternating | no         |
-| `booting`  | Starting up, or recovering after an e-stop clear     | solid red           | no            |
+| `booting`  | Starting up, recovering after an e-stop clear, or LinuxCNC unreachable for 2 s+ | solid red | no |
 | `moving`   | A move is executing                                  | solid blue          | no            |
 | `ready`    | Idle                                                 | solid green         | yes           |
 
@@ -228,16 +243,21 @@ CCW moves are sent to LinuxCNC as negative degrees, formatted fixed-point
   move. Pressing the e-stop **clears** the error (like a fault reset on a real machine);
   releasing it reruns the full startup sequence. If the fault is still there, the error
   returns. The e-stop monitor therefore keeps running after a failed startup.
-- **Not recoverable**: no network address on eth0. An e-stop can't help; restart.
+- Recoverable examples: a refused command, a failed or timed-out move, and **drives
+  disabled with no e-stop engaged** (following error or drive fault; detected by the e-stop
+  monitor while idle, and by the bridge mid-move).
+- **Not recoverable**: no network address on eth0, LinuxCNC never reachable at startup, or a
+  crashed server thread. An e-stop can't help; restart.
 - The page says which applies: "Press and release the e-stop to try again" or "Restart the
   turntable".
 - Errors where LinuxCNC itself is unreachable (NML never came up) can't be cleared this
   way, since the e-stop can't be read either. Restart.
 
 ### Shutdown
-Only the word `shutdown` sent over the control socket (`/run/turntable/control.sock`, from
-`shutdown_button.py`) powers off the Pi: state `shutdown` (LED + broadcast), wait 3 s for
-sockets to flush, `sudo shutdown -h now`. A second request is ignored. SIGTERM/SIGINT
+Only the word `shutdown` sent over the control socket (`/run/turntable/control.sock`, mode
+0600, owned by the server's user, which is also the button script's user) powers off the Pi: state `shutdown` (LED + broadcast), wait 3 s for
+sockets to flush, `sudo shutdown -h now` (the `turntable` user therefore needs passwordless sudo for this;
+that sudoers entry is not in the repo). A second request is ignored. SIGTERM/SIGINT
 (systemd stop/restart, a deploy, Ctrl-C) only make the server exit.
 
 ### LinuxCNC restarts
@@ -302,6 +322,8 @@ Static documentation page explaining:
   and one pressed mid-move.
 - Cutting stepper power mid-move can lose steps, so the table may sit slightly off from where
   the software thinks it is after an interrupted move. Harmless for relative moves.
+- `LinuxCNCBridge._play_ready_chime()` (plays a C-major arpeggio through the stepper, then
+  returns to A0) exists but its call in `startup()` is commented out, so it does not run.
 - Ctrl-C (SIGINT) and SIGTERM just exit the server; they never power off the Pi.
 - `FERROR = 50.0` is intentionally generous for open-loop stepper operation.
 - Level shifter (Adafruit 757) works correctly once wiring was fixed — no replacement needed.
