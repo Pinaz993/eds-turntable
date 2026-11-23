@@ -1,0 +1,19 @@
+# Written by LinuxCNC at runtime in the config directory
+linuxcnc.var
+linuxcnc.var.bak
+tool.tbl
+tool.tbl.bak
+linuxcnc_print.txt
+linuxcnc_debug.txt
+
+# Editor/tool backup files
+*.save
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
