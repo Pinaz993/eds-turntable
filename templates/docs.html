@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#d9dcd6">
+  <title>How the turntable works</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="panel doc">
+
+    <header class="doc-head">
+      <h1>How this works</h1>
+      <p>A quick guide to the turntable control panel, the status light and the e-stop.</p>
+    </header>
+
+    <section>
+      <h2>Using the control panel</h2>
+      <ol>
+        <li>Wait until the banner at the top says <strong>Ready</strong> and shows a green light. The controls are switched off in every other state.</li>
+        <li>Choose a <strong>direction</strong>: clockwise (CW) or counter-clockwise (CCW).</li>
+        <li>Type an <strong>angle</strong> in degrees. It must be greater than 0 and no more than 360. Any presets shown just fill in the angle; they never start a move.</li>
+        <li>Tap <strong>Rotate</strong>. The light turns blue while the table moves, then green again when it has finished.</li>
+      </ol>
+      <p>Moves are relative: the table turns by the angle you enter from wherever it is now. Only one move runs at a time. Everyone connected to the panel sees the same status, and a command sent while the table is busy is refused.</p>
+      <p>The panel only works from the same local network as the turntable.</p>
+    </section>
+
+    <section>
+      <h2>What the light means</h2>
+      <p>The lamp on the panel matches the LED on the machine.</p>
+      <ul class="legend">
+        <li>
+          <span class="swatch" style="--a: var(--led-red); --b: var(--led-red)" aria-hidden="true"></span>
+          <div><strong>Solid red: starting up.</strong> Wait for green. This also shows briefly after an e-stop is released, or if LinuxCNC restarts.</div>
+        </li>
+        <li>
+          <span class="swatch" style="--a: var(--led-green); --b: var(--led-green)" aria-hidden="true"></span>
+          <div><strong>Solid green: ready.</strong> You can send a move.</div>
+        </li>
+        <li>
+          <span class="swatch" style="--a: var(--led-blue); --b: var(--led-blue)" aria-hidden="true"></span>
+          <div><strong>Solid blue: moving.</strong> Wait for it to finish.</div>
+        </li>
+        <li>
+          <span class="swatch flash" style="--a: var(--led-yellow); --b: var(--led-off); --period: 0.5s" aria-hidden="true"></span>
+          <div><strong>Yellow flashing for 2 seconds: command refused.</strong> The panel says why. The light then returns to its normal colour.</div>
+        </li>
+        <li>
+          <span class="swatch flash" style="--a: var(--led-red); --b: var(--led-yellow); --period: 1s" aria-hidden="true"></span>
+          <div><strong>Red and yellow alternating: e-stop engaged.</strong> See below.</div>
+        </li>
+        <li>
+          <span class="swatch flash" style="--a: var(--led-red); --b: var(--led-off); --period: 0.5s" aria-hidden="true"></span>
+          <div><strong>Red flashing: system error.</strong> The panel shows the message. See below.</div>
+        </li>
+        <li>
+          <span class="swatch flash" style="--a: var(--led-red); --b: var(--led-blue); --period: 1s" aria-hidden="true"></span>
+          <div><strong>Red and blue alternating: shutting down.</strong> The turntable is powering off.</div>
+        </li>
+      </ul>
+      <p>A grey light on the panel means the panel has lost contact with the turntable. It reconnects by itself.</p>
+    </section>
+
+    <section>
+      <h2>E-stop</h2>
+      <p>Press the red e-stop button at any time to cut power to the motor. A move in progress stops immediately, and the light shows red and yellow.</p>
+      <ol>
+        <li>Deal with whatever made you stop the table.</li>
+        <li>Twist or pull the button to release it.</li>
+        <li>The turntable restarts itself (solid red) and returns to green in a few seconds.</li>
+      </ol>
+      <p>After an interrupted move the table may sit slightly off from where it thinks it is. This does not matter for relative moves.</p>
+    </section>
+
+    <section>
+      <h2>If you see an error</h2>
+      <p>A flashing red light and a <strong>System error</strong> banner mean the turntable can't take commands. The message says what happened and what to do:</p>
+      <ul>
+        <li><strong>Press and release the e-stop to try again.</strong> This clears the fault and runs the start-up sequence again. If the fault is still there, the error comes back.</li>
+        <li><strong>Restart the turntable.</strong> Some problems, such as no network connection, can't be cleared with the e-stop. Use the power button as described below, then start it again.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Power button</h2>
+      <p>Press the power button once to shut the turntable down. The light alternates red and blue, the panel shows <strong>Shutting down</strong>, and the Pi powers off after a few seconds. Press the button again to start it up.</p>
+    </section>
+
+    <footer class="foot"><a href="{{ url_for('index') }}">Back to the control panel</a></footer>
+  </main>
+</body>
+</html>
