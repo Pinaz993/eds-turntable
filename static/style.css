@@ -267,3 +267,32 @@ fieldset:disabled { opacity: 0.45; }
 @media (min-width: 30rem) {
   body { padding-top: 2.5rem; }
 }
+/* ---------- Documentation page (docs.html) ---------- */
+
+.doc { max-width: 36rem; }
+.doc section, .doc-head { padding: 1.25rem; border-bottom: 2px solid var(--ink); }
+.doc h1 { margin: 0; font-size: 1.5rem; line-height: 1.15; }
+.doc h2 { margin: 0 0 0.75rem; font-size: 1.15rem; }
+.doc p  { margin: 0.5rem 0 0; }
+.doc-head p { color: var(--steel); }
+.doc ol, .doc ul { margin: 0; padding-left: 1.25rem; }
+.doc li + li { margin-top: 0.4rem; }
+.doc section > p:first-of-type { margin-top: 0; }
+.doc ol + p, .doc ul + p { margin-top: 0.75rem; }
+
+.legend { list-style: none; padding-left: 0 !important; }
+.legend li { display: flex; align-items: center; gap: 0.75rem; }
+.legend li + li { margin-top: 0.75rem; }
+.swatch {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--a);
+}
+.swatch.flash { animation: lamp var(--period) steps(1, end) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .swatch.flash { animation: none; }
+}

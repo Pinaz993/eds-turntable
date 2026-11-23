@@ -11,9 +11,11 @@ rotate by a specified number of degrees in a specified direction.
 
 **Status:** hardware, LinuxCNC config, LED, shutdown button, the server
 (`turntable_server.py` + `lcnc_bridge.py`), and the control panel (`control.html`,
-`control.js`, `style.css`, `presets.js`) are complete. The server and client logic were
-tested against stubbed hardware, not yet on the Pi or in a real browser. Remaining:
-`docs.html` (the control panel already links to `/docs`, which errors until it exists).
+`control.js`, `style.css`, `presets.js`) and the documentation page (`docs.html`, linked
+from the control panel as `/docs`) are complete. The server and client logic were tested
+against stubbed hardware, not yet on the Pi or in a real browser. The exception is the
+power button and shutdown sequence, which have been tested many times on the Pi: the LED
+alternates red/blue for a few seconds, then the Pi powers off.
 
 ---
 
@@ -97,7 +99,7 @@ turntable/
 │   └── wifi-powersave-off.service
 ├── templates/
 │   ├── control.html        # Control panel (COMPLETE)
-│   └── docs.html           # Documentation page (NOT YET WRITTEN)
+│   └── docs.html           # Documentation page (COMPLETE)
 ├── static/
 │   ├── socket.io.min.js    # Socket.IO client 4.8.1 (COMPLETE, vendored)
 │   ├── socket.io.LICENSE   # MIT licence for the above
@@ -299,11 +301,11 @@ Edit `static/presets.js` — no other file needs touching. Each entry is
 but never starts a move. The row is hidden while the list is empty; invalid entries are
 skipped. Buttons wrap onto extra rows as needed.
 
-### docs.html (NOT YET WRITTEN)
-Static documentation page explaining:
-- How to use the control panel
-- What the LED colours mean (table above)
-- E-stop procedure
+### docs.html
+Static page served at `/docs`, reusing `style.css` (a documentation section at the end of
+that file). Covers: using the control panel, what the LED colours mean (kept in step with
+the state table above), the e-stop procedure, what to do on an error, and the power button.
+If an LED pattern or state changes, update this page too.
 
 ---
 
