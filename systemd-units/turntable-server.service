@@ -1,7 +1,9 @@
 [Unit]
 Description=Turntable Web Controller
 After=network.target linuxcnc.service
-Requires=linuxcnc.service
+# Wants=, not Requires=: a LinuxCNC crash or restart must not stop this server, and through it
+# anything else. The server reconnects on its own (see LinuxCNCBridge.reconnect).
+Wants=linuxcnc.service
 
 [Service]
 Type=simple
