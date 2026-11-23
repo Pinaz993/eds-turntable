@@ -332,64 +332,72 @@ def _monitor_estop():
     _estop_monitor_running = True
     # Loop for as long as we are supposed to monitor.
     while _estop_monitor_running:
-        # If `linuxcnc.stat()` isn't available, we need to be prepared
         try:
-            # Grab the latest information
-            bridge.status.poll()
-            # stat.estop is a direct boolean — True when e-stop is active
-            currently_estopped = bool(bridge.status.estop)
-            if currently_estopped and not _in_estop:
-                # E-stop just became active
-                # Update our records
-                _in_estop = True
-                # Whatever move was running is dead. Don't let a stuck busy flag outlive it.
-                bridge.clear_busy()
-                # An e-stop acts as a fault reset, like on a real machine: it clears a recoverable
-                # error, and releasing it runs the full startup sequence again. If the fault is
-                # still there, startup fails and the error comes straight back.
-                if _system_error and _error_recoverable:
-                    print(f"E-stop engaged: clearing error ({_system_error})", flush=True)
-                    _system_error = ''
-                # Set the LED to inform the user, and inform all connected clients
-                _publish_state()
-            # End if currently_estopped and not _in_estop
+            # If `linuxcnc.stat()` isn't available, we need to be prepared
+            try:
+                # Grab the latest information
+                bridge.status.poll()
+                # stat.estop is a direct boolean — True when e-stop is active
+                currently_estopped = bool(bridge.status.estop)
+                if currently_estopped and not _in_estop:
+                    # E-stop just became active
+                    # Update our records
+                    _in_estop = True
+                    # Whatever move was running is dead. Don't let a stuck busy flag outlive it.
+                    bridge.clear_busy()
+                    # An e-stop acts as a fault reset, like on a real machine: it clears a recoverable
+                    # error, and releasing it runs the full startup sequence again. If the fault is
+                    # still there, startup fails and the error comes straight back.
+                    if _system_error and _error_recoverable:
+                        print(f"E-stop engaged: clearing error ({_system_error})", flush=True)
+                        _system_error = ''
+                    # Set the LED to inform the user, and inform all connected clients
+                    _publish_state()
+                # End if currently_estopped and not _in_estop
 
-            elif not currently_estopped and _in_estop:
-                # E-stop just cleared — full re-init required
-                # Update our records. Until the machine is back up it is "booting", not "ready".
-                _in_estop = False
-                _booted = False
-                _publish_state()
-                # Prepare for LinuxCNC to throw an error.
-                try:
-                    # Send commands to bring the machine to a known state ready for commands
-                    bridge.startup_sequence()
-                    # If it hasn't errored out, then we're ready.
-                    on_ready()
-                # If LinuxCNC does throw an error,
-                except Exception as exc:
-                    # Error out the machine.
-                    on_error(str(exc))
+                elif not currently_estopped and _in_estop:
+                    # E-stop just cleared — full re-init required
+                    # Update our records. Until the machine is back up it is "booting", not "ready".
+                    _in_estop = False
+                    _booted = False
+                    _publish_state()
+                    # Prepare for LinuxCNC to throw an error.
+                    try:
+                        # Send commands to bring the machine to a known state ready for commands
+                        bridge.startup_sequence()
+                        # If it hasn't errored out, then we're ready.
+                        on_ready()
+                    # If LinuxCNC does throw an error,
+                    except Exception as exc:
+                        # Error out the machine.
+                        on_error(str(exc))
 
-            elif (_booted and not _in_estop and not _shutting_down and not _system_error
-                  and not bridge.status.enabled):
-                # Booted, no e-stop, nothing already wrong, and yet the drives are off: LinuxCNC dropped
-                # them itself (following error, drive fault). Without this the state would stay "ready"
-                # until the next move silently failed. An e-stop press-and-release re-runs startup,
-                # which re-enables the machine, so the error is recoverable.
-                # `not _system_error` also keeps this from re-logging every poll.
-                on_error("Drives disabled without an e-stop (following error or drive fault)")
+                elif (_booted and not _in_estop and not _shutting_down and not _system_error
+                      and not bridge.status.enabled):
+                    # Booted, no e-stop, nothing already wrong, and yet the drives are off: LinuxCNC dropped
+                    # them itself (following error, drive fault). Without this the state would stay "ready"
+                    # until the next move silently failed. An e-stop press-and-release re-runs startup,
+                    # which re-enables the machine, so the error is recoverable.
+                    # `not _system_error` also keeps this from re-logging every poll.
+                    on_error("Drives disabled without an e-stop (following error or drive fault)")
 
-        except (linuxcnc.error, SystemError) as exc:
-            # Grab the error text.
-            error_msg = str(exc)
-            # "nml" or "not ready" would indicate that the error is because the system is still starting up.
-            if isinstance(exc, SystemError) or "nml" in error_msg.lower() or "not ready" in error_msg.lower():
-                # It's safe to silently ignore this and keep polling.
-                pass
-            else:
-                # This is an error we _don't_ expect. Stop the machine.
-                on_error(f"Unexpected LinuxCNC Engine Error: {error_msg}")
+            except (linuxcnc.error, SystemError) as exc:
+                # Grab the error text.
+                error_msg = str(exc)
+                # "nml" or "not ready" would indicate that the error is because the system is still starting up.
+                if isinstance(exc, SystemError) or "nml" in error_msg.lower() or "not ready" in error_msg.lower():
+                    # It's safe to silently ignore this and keep polling.
+                    pass
+                else:
+                    # This is an error we _don't_ expect. Stop the machine.
+                    on_error(f"Unexpected LinuxCNC Engine Error: {error_msg}")
+            # End except
+        except Exception:
+            # Anything else (including an error raised while handling the errors above) must not
+            # end this thread: a dead monitor means e-stop presses go unnoticed with no sign of it.
+            # Log it and keep polling.
+            print("[ERROR] Unexpected exception in e-stop monitor (still polling):", flush=True)
+            traceback.print_exc()
         # End except
         # Wait for a quarter of a second.
         # Excuse me, socketio people. Please stop requiring an int when you can easily take a float.
