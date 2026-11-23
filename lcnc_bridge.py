@@ -15,6 +15,11 @@ class SafeStatus:
         self._stat = linuxcnc.stat()
         self._lock = lock
 
+    def reconnect(self) -> None:
+        """Replace the underlying object. Needed after LinuxCNC restarts: the old one stays bound to dead shared memory."""
+        with self._lock:
+            self._stat = linuxcnc.stat()
+
     def poll(self) -> None:
         with self._lock:
             self._stat.poll()
@@ -63,6 +68,11 @@ class SafeCommand:
         self._cmd = linuxcnc.command()
         self._lock = lock
 
+    def reconnect(self) -> None:
+        """Replace the underlying object (see SafeStatus.reconnect)."""
+        with self._lock:
+            self._cmd = linuxcnc.command()
+
     def state(self, state_type: int) -> None:
         with self._lock:
             self._cmd.state(state_type)
@@ -90,9 +100,18 @@ class SafeErrors:
         self._errors = linuxcnc.error_channel()
         self._lock = lock
 
+    def reconnect(self) -> None:
+        """Replace the underlying object (see SafeStatus.reconnect)."""
+        with self._lock:
+            self._errors = linuxcnc.error_channel()
+
     def poll(self):
         with self._lock:
             return self._errors.poll()
+
+class LinuxCNCUnavailable(RuntimeError):
+    """LinuxCNC's NML bus never became reachable. Worth retrying: LinuxCNC may just be slow to start."""
+
 
 class LinuxCNCBridge:
     """
@@ -132,6 +151,12 @@ class LinuxCNCBridge:
     POLL_INTERVAL   = 0.1
     STARTUP_TIMEOUT = 30.0
     MOVE_TIMEOUT    = 120.0
+    # How many times startup() tries to reach LinuxCNC (STARTUP_TIMEOUT seconds each) before
+    # giving up. The server does not depend on linuxcnc.service starting first or staying up,
+    # so it has to be patient with a LinuxCNC that is still starting or being restarted.
+    STARTUP_ATTEMPTS = 10
+    # Minimum seconds between attempts to rebuild the NML connection objects.
+    RECONNECT_INTERVAL = 1.0
 
     # C-major scale, C4 to C5. Each entry is (note_name, target_hz, feed_rate_deg_per_min).
     #
@@ -182,7 +207,28 @@ class LinuxCNCBridge:
         self.status = SafeStatus(self._lock)
         self.errors = SafeErrors(self._lock)
         self._busy    = False
+        self._last_reconnect = 0.0
     # End __init__()
+
+    def reconnect(self, min_interval: float = 0.0) -> None:
+        """
+        Rebuilds the NML connection objects. LinuxCNC's Python objects stay bound to the old
+        shared memory when LinuxCNC restarts, so after a restart they never recover on their own.
+        Does nothing if the last attempt was less than `min_interval` seconds ago, so a
+        polling loop can call this on every failure.
+        """
+        now = time.monotonic()
+        if now - self._last_reconnect < min_interval:
+            return
+        self._last_reconnect = now
+        try:
+            self.status.reconnect()
+            self.command.reconnect()
+            self.errors.reconnect()
+        except Exception as exc:
+            # LinuxCNC isn't there yet. Whoever is polling will try again.
+            print(f"[WARNING] LinuxCNC reconnect failed ({type(exc).__name__}: {exc})", flush=True)
+    # End reconnect()
 
     ### Utilities ###
 
@@ -221,6 +267,8 @@ class LinuxCNCBridge:
                 # With proper NML serialization these should not occur, but log them
                 # as warnings rather than crashing if they somehow do.
                 print(f"[WARNING] poll_until: unexpected poll error ({type(exc).__name__}: {exc}), retrying...", flush=True)
+                # If LinuxCNC restarted, the old connection is dead. Build a fresh one.
+                self.reconnect(self.RECONNECT_INTERVAL)
                 # Wait for a little bit
                 time.sleep(self.POLL_INTERVAL)
                 # Back to the top of the loop.
@@ -296,8 +344,10 @@ class LinuxCNCBridge:
 
         Raises
         ------
+        LinuxCNCUnavailable
+            If LinuxCNC's NML bus is not reachable within STARTUP_TIMEOUT seconds.
         RuntimeError
-            If any startup step fails to complete within STARTUP_TIMEOUT seconds.
+            If any other startup step fails to complete within STARTUP_TIMEOUT seconds.
         """
         print("Starting LinuxCNC startup sequence", flush=True)
 
@@ -311,9 +361,10 @@ class LinuxCNCBridge:
                 self.status.poll()
                 if self.status.task_state > 0: break
             except (SystemError, linuxcnc.error):
-                pass
+                # Not up yet, or restarted underneath us. Retry on a fresh connection.
+                self.reconnect(self.RECONNECT_INTERVAL)
             if time.time() - start > self.STARTUP_TIMEOUT:
-                raise RuntimeError('LinuxCNC NML bus did not become ready before timeout')
+                raise LinuxCNCUnavailable('LinuxCNC NML bus did not become ready before timeout')
             time.sleep(self.POLL_INTERVAL)
         print(f"NML bus ready (task_state={self.status.task_state})", flush=True)
 
@@ -403,13 +454,27 @@ class LinuxCNCBridge:
         Runs the full startup sequence to bring the machine to a state where it can accept
         MDI commands. Intended to be called once from a background thread at startup.
         Calls on_ready() on success, or on_error() if an unrecoverable error occurs.
+
+        If LinuxCNC isn't reachable yet (it is starting, or being restarted by systemd), tries
+        again up to STARTUP_ATTEMPTS times before giving up.
         """
-        try:
-            self.startup_sequence()
-            # self._play_ready_chime()
-            self.on_ready()
-        except Exception as exc:
-            self.on_error(str(exc))
+        for attempt in range(1, self.STARTUP_ATTEMPTS + 1):
+            try:
+                self.startup_sequence()
+                # self._play_ready_chime()
+                self.on_ready()
+                return
+            except LinuxCNCUnavailable as exc:
+                print(f"[WARNING] {exc} (attempt {attempt}/{self.STARTUP_ATTEMPTS})", flush=True)
+                if attempt == self.STARTUP_ATTEMPTS:
+                    # An e-stop can't help when there is nothing to read it from.
+                    self.on_error(f"{exc}. Check that LinuxCNC is running, then restart the turntable.",
+                                  recoverable=False)
+                    return
+                self.reconnect()
+            except Exception as exc:
+                self.on_error(str(exc))
+                return
     # End startup()
 
     ### Movement ###
