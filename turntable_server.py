@@ -12,6 +12,7 @@ import socket
 import struct
 import subprocess
 import threading
+import time
 import traceback
 import linuxcnc
 from flask import Flask, render_template, request, abort
@@ -323,6 +324,51 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
 
 _estop_monitor_running = False
 
+# LinuxCNC runs as its own service and can crash or be restarted while this server stays up
+# (turntable-server.service only Wants= it). These track whether we have lost it.
+# How long polls must fail in a row before we stop calling the machine ready.
+LCNC_LOST_AFTER_SEC = 2.0
+# When polls started failing, or None while they succeed.
+_lcnc_unreachable_since: float | None = None
+# True once polls have failed for LCNC_LOST_AFTER_SEC.
+_lcnc_lost = False
+
+def _note_lcnc_unreachable():
+    """
+    A poll of LinuxCNC just failed. Rebuild the connection (a restarted LinuxCNC never answers
+    on the old one) and, if this has gone on long enough, stop reporting the machine as ready.
+    """
+    global _lcnc_unreachable_since, _lcnc_lost, _booted, _in_estop
+    now = time.monotonic()
+    if _lcnc_unreachable_since is None:
+        _lcnc_unreachable_since = now
+    bridge.reconnect(bridge.RECONNECT_INTERVAL)
+    if not _lcnc_lost and now - _lcnc_unreachable_since >= LCNC_LOST_AFTER_SEC:
+        _lcnc_lost = True
+        print("[WARNING] Lost contact with LinuxCNC. Waiting for it to come back.", flush=True)
+        # Whatever was happening is over. Show "booting" until we have re-run startup.
+        _booted = False
+        _in_estop = False
+        bridge.clear_busy()
+        _publish_state()
+# End _note_lcnc_unreachable()
+
+def _note_lcnc_reachable():
+    """A poll of LinuxCNC just succeeded. If we had lost it, bring the machine back up."""
+    global _lcnc_unreachable_since, _lcnc_lost
+    _lcnc_unreachable_since = None
+    if not _lcnc_lost:
+        return
+    _lcnc_lost = False
+    print("LinuxCNC is back. Re-running startup.", flush=True)
+    try:
+        # A restarted LinuxCNC comes up in e-stop and unhomed, same as at boot.
+        bridge.startup_sequence()
+        on_ready()
+    except Exception as exc:
+        on_error(str(exc))
+# End _note_lcnc_reachable()
+
 def _monitor_estop():
     """
     Continuously poll LinuxCNC stat for e-stop state changes.
@@ -337,6 +383,8 @@ def _monitor_estop():
             try:
                 # Grab the latest information
                 bridge.status.poll()
+                # Polling worked. If LinuxCNC had gone away and is back, re-initialise first.
+                _note_lcnc_reachable()
                 # stat.estop is a direct boolean — True when e-stop is active
                 currently_estopped = bool(bridge.status.estop)
                 if currently_estopped and not _in_estop:
@@ -386,8 +434,9 @@ def _monitor_estop():
                 error_msg = str(exc)
                 # "nml" or "not ready" would indicate that the error is because the system is still starting up.
                 if isinstance(exc, SystemError) or "nml" in error_msg.lower() or "not ready" in error_msg.lower():
-                    # It's safe to silently ignore this and keep polling.
-                    pass
+                    # Not an error in itself: LinuxCNC is starting, restarting, or gone. Keep polling,
+                    # reconnecting as we go. If it stays gone, the state drops back to "booting".
+                    _note_lcnc_unreachable()
                 else:
                     # This is an error we _don't_ expect. Stop the machine.
                     on_error(f"Unexpected LinuxCNC Engine Error: {error_msg}")
