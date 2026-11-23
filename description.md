@@ -105,8 +105,8 @@ All unit files live in `/etc/systemd/system/` and are complete:
 | Unit                        | Runs                  | As       | Notes                                              |
 |-----------------------------|-----------------------|----------|----------------------------------------------------|
 | `linuxcnc.service`          | LinuxCNC + `turntable.ini` | turntable | `Restart=on-failure`                          |
-| `turntable-server.service`  | `turntable_server.py` | root     | Root required for port 80. `Requires=linuxcnc.service` |
-| `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends SIGTERM to the server, or shuts down directly if the server isn't running |
+| `turntable-server.service`  | `turntable_server.py` | root     | Root required for port 80. `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
+| `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends `shutdown` over `/run/turntable/control.sock`, or shuts down directly if the server isn't reachable |
 | `wifi-powersave-off.service`| `iw wlan0 set power_save off` | root | oneshot                                      |
 
 ## Firewall
@@ -235,9 +235,17 @@ CCW moves are sent to LinuxCNC as negative degrees, formatted fixed-point
   way, since the e-stop can't be read either. Restart.
 
 ### Shutdown
-SIGTERM/SIGINT (systemd stop, or the power button via `shutdown_button.py`) hands off to
-a background thread: state `shutdown` (LED + broadcast), wait 3 s for sockets to flush,
-`sudo shutdown -h now`. A second signal is ignored.
+Only the word `shutdown` sent over the control socket (`/run/turntable/control.sock`, from
+`shutdown_button.py`) powers off the Pi: state `shutdown` (LED + broadcast), wait 3 s for
+sockets to flush, `sudo shutdown -h now`. A second request is ignored. SIGTERM/SIGINT
+(systemd stop/restart, a deploy, Ctrl-C) only make the server exit.
+
+### LinuxCNC restarts
+`turntable-server.service` `Wants=` LinuxCNC rather than requiring it, so LinuxCNC crashing
+or restarting does not take the server down. At startup, `bridge.startup()` retries up to
+10 × 30 s for the NML bus. At runtime, the e-stop monitor treats 2 s of failed polls as
+"lost LinuxCNC" (state `booting`), rebuilds the NML objects once a second, and re-runs the
+startup sequence when polls succeed again.
 
 ---
 
@@ -283,8 +291,9 @@ Static documentation page explaining:
 - History: an earlier version used eventlet with `monkey_patch()`; on the Pi that stalled
   the server before it printed anything. Cause not pinned down; the move to threading mode
   made it moot.
-- `linuxcnc` Python module loses its NML connection if LinuxCNC is restarted
-  while the Python process is running — requires a server restart too.
+- The `linuxcnc` Python objects stay bound to dead shared memory if LinuxCNC restarts.
+  `LinuxCNCBridge.reconnect()` rebuilds them. **Untested on the Pi**: `kill` LinuxCNC
+  mid-idle and mid-move and confirm the page returns to `ready`.
 - E-stop during a move, tested on the Pi: the page goes to `estop` immediately and returns
   to `ready` on release. A later test failed with "must be in joint mode to home"; cause and
   fix are described under "E-stop handling" (joint mode before homing, and an interrupted move
@@ -293,10 +302,7 @@ Static documentation page explaining:
   and one pressed mid-move.
 - Cutting stepper power mid-move can lose steps, so the table may sit slightly off from where
   the software thinks it is after an interrupted move. Harmless for relative moves.
-- Ctrl-C (SIGINT) on the server triggers a full system shutdown, same as SIGTERM.
-  Keep in mind during development.
-- `shutdown_button.py` takes the first `pgrep` match as the server's PID; if several
-  processes match, it falls back to a direct shutdown (no LED/client notice).
+- Ctrl-C (SIGINT) and SIGTERM just exit the server; they never power off the Pi.
 - `FERROR = 50.0` is intentionally generous for open-loop stepper operation.
 - Level shifter (Adafruit 757) works correctly once wiring was fixed — no replacement needed.
 - Buck converter (Mean Well, 15W) on order for permanent Pi power from 24V DIN rail supply.
