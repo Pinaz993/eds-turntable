@@ -75,6 +75,7 @@
     go:       $('go'),
     presetsField: $('presets-field'),
     presets:  $('presets'),
+    presetTemplate: $('preset-template'),
     toast:    $('toast'),
   };
 
@@ -155,9 +156,7 @@
       if (validateAngle(degrees)) continue;                        // skip bad entries quietly
       const direction = preset.direction === 'CW' || preset.direction === 'CCW' ? preset.direction : null;
 
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'preset';
+      const button = el.presetTemplate.content.firstElementChild.cloneNode(true);
       button.textContent = preset.label || `${degrees}°` + (direction ? ` ${direction}` : '');
       button.addEventListener('click', () => {
         el.angle.value = String(degrees);

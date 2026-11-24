@@ -58,14 +58,14 @@
         <div class="field" id="presets-field" hidden>
           <span class="label" id="presets-label">Presets</span>
           <div class="presets" id="presets" role="group" aria-labelledby="presets-label"></div>
+          <template id="preset-template"><button type="button" class="preset"></button></template>
         </div>
 
         <button type="submit" id="go" class="go">Rotate</button>
       </fieldset>
     </form>
 
-    <!--suppress HtmlUnknownTarget -->
-    <footer class="foot"><a href="{{ url_for('docs') }}">How this works</a></footer>
+    <footer class="foot"><!--suppress HtmlUnknownTarget --><a href="{{ url_for('docs') }}">How this works</a></footer>
   </main>
 
   <div class="toast" id="toast" role="alert" hidden></div>

@@ -197,8 +197,6 @@ fieldset:disabled { opacity: 0.45; }
 /* Presets: wraps onto as many rows as Ed needs. */
 .presets { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
-/* The buttons are created by static/control.js, which the IDE can't see. */
-/*noinspection CssUnusedSymbol*/
 .preset {
   flex: 1 1 5rem;
   min-height: 3.25rem;
@@ -214,9 +212,7 @@ fieldset:disabled { opacity: 0.45; }
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-/*noinspection CssUnusedSymbol*/
 .preset:active { background: var(--rule); }
-/*noinspection CssUnusedSymbol*/
 .preset:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 /* Rotate */

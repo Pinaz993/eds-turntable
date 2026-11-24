@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # shutdown_button.py
 # Monitors a physical button on GPIO 3 and asks the turntable server to shut the Pi down.
 # The request is the word "shutdown" sent over a Unix socket, not a signal, so nothing else
