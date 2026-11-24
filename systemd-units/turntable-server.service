@@ -14,8 +14,16 @@ ExecStart=/usr/bin/python3 /home/turntable/linuxcnc/configs/turntable/turntable_
 # systemd creates /run/turntable/ owned by User= and removes it on stop. The control socket lives here.
 RuntimeDirectory=turntable
 RuntimeDirectoryMode=0750
-Restart=on-failure
+# always, not on-failure: this server must come back whatever way it ended. An explicit
+# `systemctl stop` is still respected.
+Restart=always
 RestartSec=5
+# Unbuffered, so every log line reaches the journal even if the process is killed.
+Environment=PYTHONUNBUFFERED=1
+# systemd restarts the server if it stops sending heartbeats for 60 s (a hung linuxcnc call
+# freezes every thread). turntable_server.py sends them; see _watchdog().
+WatchdogSec=60
+NotifyAccess=main
 # Safety net: if the server ever hangs on stop, systemd kills it after 10 s instead of 90 s.
 TimeoutStopSec=10
 

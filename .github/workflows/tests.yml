@@ -1,0 +1,18 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # linuxcnc and gpiozero are faked by tests/conftest.py, so nothing hardware-related is installed.
+      # Installed directly: pyproject.toml declares dependencies but is not a buildable package.
+      - run: pip install "flask>=3.1.3" "flask-socketio>=5.6.1" "simple-websocket>=1.1.0" "pytest>=8"
+      - run: pytest -q

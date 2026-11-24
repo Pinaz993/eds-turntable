@@ -6,6 +6,10 @@ After=network.target
 Type=oneshot
 ExecStart=/usr/sbin/iw wlan0 set power_save off
 RemainAfterExit=yes
+# wlan0 may not exist yet when this runs, and iw then fails. Try again rather than silently
+# leaving power saving on.
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

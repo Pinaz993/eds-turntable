@@ -7,7 +7,10 @@ Type=simple
 User=turntable
 WorkingDirectory=/home/turntable/linuxcnc/configs/turntable
 ExecStart=/bin/bash -c 'echo "" | /usr/bin/linuxcnc -r /home/turntable/linuxcnc/configs/turntable/turntable.ini'
-Restart=on-failure
+# always, not on-failure: with on-failure, any exit with status 0 (a clean exit of the
+# launcher, whatever caused it) would leave the machine dead until the next reboot.
+# An explicit `systemctl stop` is still respected.
+Restart=always
 RestartSec=5
 StandardError=journal
 StandardOutput=journal

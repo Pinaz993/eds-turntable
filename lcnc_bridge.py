@@ -93,6 +93,10 @@ class SafeCommand:
         with self._lock:
             self._cmd.teleop_enable(enabled)
 
+    def abort(self) -> None:
+        with self._lock:
+            self._cmd.abort()
+
 
 class SafeErrors:
     """An explicit, thread-safe wrapper for linuxcnc.error_channel."""
@@ -232,6 +236,24 @@ class LinuxCNCBridge:
 
     ### Utilities ###
 
+    # Upper bound on how many messages drain_errors() will discard in one go.
+    MAX_ERROR_DRAIN = 100
+
+    def drain_errors(self) -> int:
+        """
+        Discards whatever is waiting in LinuxCNC's error channel and returns how many messages
+        that was. Bounded, so a channel that never runs dry can't hang the caller.
+
+        Called before every move. LinuxCNC posts messages of its own during an e-stop reset,
+        enabling and homing. Left in the channel, the first of them would be read after the
+        next perfectly good move and blamed on it.
+        """
+        drained = 0
+        while drained < self.MAX_ERROR_DRAIN and self.errors.poll():
+            drained += 1
+        return drained
+    # End drain_errors()
+
     def poll_until(self, condition: Callable, timeout: float=STARTUP_TIMEOUT) -> bool:
         """
         Polls LinuxCNC until a condition is met or a timeout expires.
@@ -370,8 +392,7 @@ class LinuxCNCBridge:
 
         # Drain any stale errors left over from a previous session.
         print("Draining stale errors...", flush=True)
-        while self.errors.poll():
-            pass
+        self.drain_errors()
 
         # Clear ESTOP. LinuxCNC starts in STATE_ESTOP; this moves it to STATE_ESTOP_RESET.
         print("Clearing ESTOP...", flush=True)
@@ -384,7 +405,7 @@ class LinuxCNCBridge:
                 return
             else:
                 raise RuntimeError('Failed to clear ESTOP due to an unexpected system error')
-        print("ESTOP cleared")
+        print("ESTOP cleared", flush=True)
 
         # Enable the machine (power on drives/amplifiers).
         print("Enabling machine...", flush=True)
@@ -493,12 +514,19 @@ class LinuxCNCBridge:
             CCW moves are negated before sending.
         """
         try:
+            # Start from a clean error channel, so anything read after the move is the move's own.
+            self.drain_errors()
             signed = degrees if direction == 'CW' else -degrees
             # Fixed-point on purpose: Python would write tiny values as e.g. 1e-05, which G-code can't parse.
             self.command.mdi(f'G91 G0 A{signed:.4f}')
 
             result = self._wait_for_move()
             if result == self.OUTCOME_TIMED_OUT:
+                # Don't leave a move running that the UI has already given up on.
+                try:
+                    self.command.abort()
+                except Exception as exc:
+                    print(f"[WARNING] Could not abort timed-out move ({type(exc).__name__}: {exc})", flush=True)
                 self.on_error('Move timed out')
                 return
             if result == self.OUTCOME_ABORTED:

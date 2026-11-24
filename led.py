@@ -2,7 +2,7 @@
 # Parameters and methods for colors and flashing timers of the status LED.
 
 from gpiozero import RGBLED
-from threading import Timer
+from threading import Lock, Timer
 from typing import Callable
 
 class StatusLED:
@@ -85,6 +85,16 @@ class StatusLED:
     
     led: RGBLED = RGBLED(red=19, green=20, blue=21)
 
+    def __init__(self) -> None:
+        # set_status() is called from request threads, the e-stop monitor, move threads and
+        # expiry timers. The lock keeps two of them from interleaving a colour change with a
+        # timer change.
+        self._lock = Lock()
+        # The pending "status expired" timer, if any. Only one may exist at a time: a newer
+        # status replaces it, so an old timer can't cut a newer flash short, and a client
+        # that spams rejected commands can't pile up threads.
+        self._expiry_timer: Timer | None = None
+
 
     def set_status(self, status: str, recalculate: Callable | None = None) -> None:
         """
@@ -105,17 +115,26 @@ class StatusLED:
         setting = self.status_settings.get(status)
         if not setting: # Is `status` a valid status?
             raise KeyError(f"Invalid status: {status}")
+        # Refuse an expiring status without a callback *before* touching the LED, so a bad
+        # call can't leave the LED showing a status that will never expire.
+        if setting['expr_time'] and not recalculate:
+            raise ValueError(f"Invalid callback for recalculating machine status: {recalculate}")
         # `setting` is valid.
-        if setting['on_time']: # Is the LED supposed to blink?
-            # Yes. Get the LED to use all four LED settings from the dict.
-            self.led.blink(on_color=setting['on_color'], off_color=setting['off_color'],
-                            on_time=setting['on_time'], off_time=setting['off_time'])
-        else: # No, the LED is not supposed to blink.
-            self.led.color = setting['on_color']
-        if setting['expr_time']: # Is the status supposed to expire?
-            if recalculate: # Is recalculate a valid Callable?
-                # Yes. Set a timer to recalculate machine status, with the proper time.
-                Timer(setting['expr_time'], recalculate).start()
-            else: # Tried to set an expiring status without a callback. Raise an exception.
-                raise ValueError(f"Invalid callback for recalculating machine status: {recalculate}")
-
+        with self._lock:
+            # Whatever was going to expire no longer matters: this status replaces it.
+            if self._expiry_timer is not None:
+                self._expiry_timer.cancel()
+                self._expiry_timer = None
+            if setting['on_time']: # Is the LED supposed to blink?
+                # Yes. Get the LED to use all four LED settings from the dict.
+                self.led.blink(on_color=setting['on_color'], off_color=setting['off_color'],
+                                on_time=setting['on_time'], off_time=setting['off_time'])
+            else: # No, the LED is not supposed to blink.
+                self.led.color = setting['on_color']
+            if setting['expr_time']: # Is the status supposed to expire?
+                # Set a timer to recalculate machine status, with the proper time.
+                # Daemon: a pending timer must never hold up process exit.
+                timer = Timer(setting['expr_time'], recalculate)
+                timer.daemon = True
+                timer.start()
+                self._expiry_timer = timer

@@ -25,10 +25,14 @@ from led import StatusLED
 # Configuration
 # ---------------------------------------------------------------------------
 
-# How many times to retry getting the interface network before giving up.
-NETWORK_RETRY_ATTEMPTS = 10
+# How many times to retry getting the interface network before giving up. Two minutes in
+# total: a slow DHCP server shouldn't leave the machine needing a restart.
+NETWORK_RETRY_ATTEMPTS = 40
 # How long to wait between retries, in seconds.
 NETWORK_RETRY_DELAY_SEC = 3
+# Once the network is known, how often to check that eth0 still has the same one (a DHCP
+# lease can move the machine to a different subnet while it runs).
+NETWORK_REFRESH_SEC = 30
 
 SERVER_HOST = '0.0.0.0'
 SERVER_PORT = 80
@@ -41,6 +45,13 @@ MAX_MOVE_DEGREES = 360.0
 # by the user this server runs as. The socket is mode 0600: only that user can use it, which
 # is also the user the shutdown button script runs as.
 CONTROL_SOCKET = '/run/turntable/control.sock'
+
+# The command that powers off the Pi. Absolute path and `-n` (never prompt for a password):
+# it must match the sudoers entry in sudoers.d/turntable-shutdown exactly, and must fail fast
+# instead of hanging if that entry is missing.
+SHUTDOWN_COMMAND = ['sudo', '-n', '/usr/sbin/shutdown', '-h', 'now']
+# How long to give that command before calling it failed, in seconds.
+SHUTDOWN_COMMAND_TIMEOUT_SEC = 30
 
 def _get_interface_network(iface: str = 'eth0') -> ipaddress.IPv4Network | None:
     """Return the IPv4Network for *iface* by querying the kernel directly, for
@@ -110,6 +121,28 @@ def _init_network():
     )
 # End _init_network()
 
+def _refresh_network() -> bool:
+    """
+    Re-read eth0's network and adopt it if it has changed. Returns True if it changed.
+    A failed read (link flapping, lease being renewed) keeps the network we already have:
+    the filter must not drop to "nobody" or lock everyone out for a blip.
+    """
+    global ALLOWED_NETWORK
+    network = _get_interface_network('eth0')
+    if network is None or network == ALLOWED_NETWORK:
+        return False
+    print(f"Network changed: {ALLOWED_NETWORK} -> {network.with_prefixlen}", flush=True)
+    ALLOWED_NETWORK = network
+    return True
+# End _refresh_network()
+
+def _watch_network():
+    """Keeps ALLOWED_NETWORK current for the life of the server. Runs as a background thread."""
+    while True:
+        socketio.sleep(NETWORK_REFRESH_SEC)
+        _refresh_network()
+# End _watch_network()
+
 # Make a new Flask app.
 app = Flask(__name__)
 # We need a secret key for web-socket stuff. Will be invalidated on machine restart.
@@ -155,6 +188,9 @@ _move_lock = threading.Lock()
 # Makes "has a shutdown already begun?" and "begin one" a single step, so two button presses
 # at the same instant can't both start a shutdown.
 _shutdown_lock = threading.Lock()
+# Makes "is there already an error?" and "record this one" a single step, so the first error
+# really is the one that is kept, even when several threads fail at once.
+_error_lock = threading.Lock()
 
 # Maps each machine state to the LED status that communicates it.
 _LED_FOR_STATE = {
@@ -195,7 +231,10 @@ def _publish_state() -> None:
 
 def _recalculate_led_status() -> None:
     """Called by StatusLED after a transient LED status expires."""
-    led.set_status(_LED_FOR_STATE[_current_state()['state']])
+    # Under the publish lock, so a state change can't land between working out the state and
+    # showing it (which would leave the LED showing the old one).
+    with _publish_lock:
+        led.set_status(_LED_FOR_STATE[_current_state()['state']])
 # End _recalculate_led_status()
 
 # ---------------------------------------------------------------------------
@@ -285,13 +324,14 @@ def on_error(message: str, recoverable: bool = True):
     print(f"[ERROR] {message} ({'clearable with e-stop' if recoverable else 'needs a restart'})", flush=True)
     # We have global variables for these.
     global _system_error, _error_recoverable
-    # Already stuck in an error? Keep the first (most likely root-cause) message,
-    # and don't spam the clients with repeats.
-    if _system_error:
-        return
+    with _error_lock:
+        # Already stuck in an error? Keep the first (most likely root-cause) message,
+        # and don't spam the clients with repeats.
+        if _system_error:
+            return
+        _system_error = message
+        _error_recoverable = recoverable
     # Let anyone who cares know.
-    _system_error = message
-    _error_recoverable = recoverable
     # Set the LED and inform all clients that the machine cannot accept further commands without a restart.
     _publish_state()
 # End on_error()
@@ -323,6 +363,9 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
 # ---------------------------------------------------------------------------
 
 _estop_monitor_running = False
+# When the e-stop monitor last went round its loop (time.monotonic()), or None before it has
+# started. The systemd watchdog heartbeat depends on it (see _watchdog).
+_monitor_heartbeat: float | None = None
 
 # LinuxCNC runs as its own service and can crash or be restarted while this server stays up
 # (turntable-server.service only Wants= it). These track whether we have lost it.
@@ -377,7 +420,9 @@ def _monitor_estop():
     global _estop_monitor_running, _in_estop, _booted, _system_error
     _estop_monitor_running = True
     # Loop for as long as we are supposed to monitor.
+    global _monitor_heartbeat
     while _estop_monitor_running:
+        _monitor_heartbeat = time.monotonic()
         try:
             # If `linuxcnc.stat()` isn't available, we need to be prepared
             try:
@@ -396,9 +441,10 @@ def _monitor_estop():
                     # An e-stop acts as a fault reset, like on a real machine: it clears a recoverable
                     # error, and releasing it runs the full startup sequence again. If the fault is
                     # still there, startup fails and the error comes straight back.
-                    if _system_error and _error_recoverable:
-                        print(f"E-stop engaged: clearing error ({_system_error})", flush=True)
-                        _system_error = ''
+                    with _error_lock:
+                        if _system_error and _error_recoverable:
+                            print(f"E-stop engaged: clearing error ({_system_error})", flush=True)
+                            _system_error = ''
                     # Set the LED to inform the user, and inform all connected clients
                     _publish_state()
                 # End if currently_estopped and not _in_estop
@@ -489,8 +535,11 @@ def handle_move_command(data=None) -> None:
         Reject a movement command, informing the sender, and setting the LED to flash accordingly.
         :param rejection_message: The message to send back, indicating why the move was rejected.
         """
-        # Set the LED to inform the user that a movement command was rejected.
-        led.set_status('command_rejected', recalculate=_recalculate_led_status)
+        # Set the LED to inform the user that a movement command was rejected. Only when the
+        # LED is showing something routine: an e-stop, error or shutdown indication must
+        # never be hidden for two seconds by a client sending commands it knows will fail.
+        if _current_state()['state'] in ('ready', 'moving'):
+            led.set_status('command_rejected', recalculate=_recalculate_led_status)
         # Inform the sender of the move that the move was rejected, and why.
         emit('move_error', {'message': rejection_message})
     # End reject_move()
@@ -548,12 +597,22 @@ def handle_move_command(data=None) -> None:
         return
 
     # If we've reached this point, then implement the move.
-    # Set the LED to tell the user the machine is moving, and let all clients know.
-    _publish_state()
-    # Let all clients know that the machine is moving this much, in this direction.
-    socketio.emit('move_started', {'degrees': degrees, 'direction': direction})
-    # Send the move to LinuxCNC through the bridge.
-    socketio.start_background_task(bridge.send_move, degrees, direction)
+    try:
+        # Set the LED to tell the user the machine is moving, and let all clients know.
+        _publish_state()
+        # Let all clients know that the machine is moving this much, in this direction.
+        socketio.emit('move_started', {'degrees': degrees, 'direction': direction})
+        # Send the move to LinuxCNC through the bridge.
+        socketio.start_background_task(bridge.send_move, degrees, direction)
+    except Exception:
+        # The machine is marked busy, but nothing will ever mark it idle again: the thread that
+        # does that never started. Left alone, the page would show "Moving" until an e-stop.
+        bridge.clear_busy()
+        try:
+            _publish_state()
+        except Exception:
+            traceback.print_exc()
+        raise
 # End handle_move_command()
 
 # ---------------------------------------------------------------------------
@@ -583,7 +642,19 @@ def _shutdown_sequence():
     socketio.sleep(3)
     # systemd will send this server SIGTERM as part of the shutdown. _handle_exit() makes
     # that exit immediately, so the Pi isn't held up waiting for us.
-    subprocess.run(['sudo', 'shutdown', '-h', 'now'])
+    try:
+        result = subprocess.run(SHUTDOWN_COMMAND, capture_output=True, text=True,
+                                timeout=SHUTDOWN_COMMAND_TIMEOUT_SEC)
+        failure = f"exit status {result.returncode}: {result.stderr.strip()}" if result.returncode else ''
+    except (OSError, subprocess.SubprocessError) as exc:
+        failure = f"{type(exc).__name__}: {exc}"
+    if failure:
+        # Without this the machine would sit on "Shutting down" (red/blue) forever, still
+        # powered on, because the one request that could end it has already been used up.
+        print(f"[ERROR] Shutdown command failed ({failure})", flush=True)
+        with _shutdown_lock:
+            _shutting_down = False
+        on_error(f"The shutdown command failed ({failure}). The turntable is still running.")
 # End _shutdown_sequence()
 
 def _control_listener():
@@ -649,6 +720,60 @@ signal.signal(signal.SIGTERM, _handle_exit)
 signal.signal(signal.SIGINT,  _handle_exit)
 
 # ---------------------------------------------------------------------------
+# systemd watchdog
+#
+# turntable-server.service sets WatchdogSec=, so systemd restarts the server if it stops
+# sending a heartbeat. That covers the failures nothing inside the process can report: a
+# linuxcnc call that blocks while holding the interpreter lock freezes every thread,
+# including the web server and this one.
+# ---------------------------------------------------------------------------
+
+# How long the e-stop monitor may go without completing a loop before the heartbeat stops.
+# Generous on purpose: re-running the startup sequence inside the monitor legitimately takes
+# minutes in the worst case, and must not be mistaken for a hang.
+MONITOR_STALL_SEC = 300.0
+
+def _sd_notify(message: str) -> bool:
+    """Send *message* to systemd's notify socket. Does nothing (False) when not run by systemd."""
+    address = os.environ.get('NOTIFY_SOCKET')
+    if not address:
+        return False
+    if address.startswith('@'):  # abstract socket
+        address = '\0' + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(message.encode())
+        return True
+    except OSError:
+        return False
+# End _sd_notify()
+
+def _monitor_healthy(now: float | None = None) -> bool:
+    """False if the e-stop monitor started but has since stopped looping."""
+    if _monitor_heartbeat is None:  # Not started (yet, or not at all): nothing to judge.
+        return True
+    if now is None:
+        now = time.monotonic()
+    return now - _monitor_heartbeat < MONITOR_STALL_SEC
+# End _monitor_healthy()
+
+def _watchdog():
+    """Sends systemd a heartbeat at a third of the watchdog interval while the server is healthy."""
+    try:
+        interval = int(os.environ['WATCHDOG_USEC']) / 1_000_000 / 3
+    except (KeyError, ValueError):
+        return  # Not running under a watchdog.
+    print(f"Watchdog heartbeat every {interval:.1f}s", flush=True)
+    while True:
+        if _monitor_healthy():
+            _sd_notify('WATCHDOG=1')
+        else:
+            print("[ERROR] E-stop monitor has stopped; withholding watchdog heartbeat.", flush=True)
+        time.sleep(interval)
+# End _watchdog()
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -664,6 +789,8 @@ def _startup():
     # Don't proceed to LinuxCNC startup in that case.
     if _system_error:
         return
+    # Keep following eth0 from here on, so a changed lease can't quietly lock everyone out.
+    socketio.start_background_task(_watch_network)
     # Now bring LinuxCNC up.
     bridge.startup()
     # A failure the e-stop can't clear leaves nothing to monitor.
@@ -677,6 +804,8 @@ def _startup():
 if __name__ == '__main__':
     # No thread should be able to die silently from here on.
     threading.excepthook = _thread_excepthook
+    # Heartbeat for systemd's watchdog, from the very start: it covers the slow startup too.
+    socketio.start_background_task(_watchdog)
     # Set the LED to communicate that the machine is setting up
     led.set_status('booting')
     # Set up the bridge

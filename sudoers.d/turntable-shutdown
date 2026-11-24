@@ -1,0 +1,9 @@
+# Lets the `turntable` user power off the Pi, and nothing else.
+# Used by turntable_server.py and shutdown_button.py (SHUTDOWN_COMMAND in each).
+#
+# Install (never copy it in by hand; a syntax error in /etc/sudoers.d can lock out sudo):
+#   sudo visudo -cf sudoers.d/turntable-shutdown
+#   sudo install -m 0440 -o root -g root sudoers.d/turntable-shutdown /etc/sudoers.d/turntable-shutdown
+#
+# The command must match exactly, arguments included.
+turntable ALL=(root) NOPASSWD: /usr/sbin/shutdown -h now

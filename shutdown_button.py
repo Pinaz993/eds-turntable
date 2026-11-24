@@ -12,10 +12,16 @@ from gpiozero import Button
 
 CONTROL_SOCKET = '/run/turntable/control.sock'
 
+# Used only when the server can't be reached. Must match sudoers.d/turntable-shutdown, and
+# `-n` makes it fail at once instead of waiting for a password nobody can type.
+SHUTDOWN_COMMAND = ['sudo', '-n', '/usr/sbin/shutdown', '-h', 'now']
+
 # GPIO 3, physical pin 5
 # Button is wired between GPIO 3 and ground (active low)
 # Internal pull-up keeps the pin HIGH when button is not pressed
-button = Button(3, pull_up=True)
+# bounce_time ignores anything shorter than 50 ms: contact bounce, and the sort of electrical
+# noise a stepper driver and its long wires can put on an input, must not power the Pi off.
+button = Button(3, pull_up=True, bounce_time=0.05)
 
 
 def shutdown() -> None:
@@ -32,7 +38,14 @@ def shutdown() -> None:
             s.recv(32)  # wait for the server's acknowledgement
     except OSError:
         # Server isn't running — shut down directly.
-        subprocess.run(['sudo', 'shutdown', '-h', 'now'])
+        try:
+            result = subprocess.run(SHUTDOWN_COMMAND, timeout=30)
+            if result.returncode:
+                print(f"[ERROR] Shutdown command failed (exit status {result.returncode})", flush=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            # This runs on gpiozero's event thread. An exception escaping it would end that
+            # thread, and the button would silently stop working until the service restarts.
+            print(f"[ERROR] Shutdown command failed ({type(exc).__name__}: {exc})", flush=True)
 
 # Register the shutdown function to be called when the button is pressed
 button.when_pressed = shutdown

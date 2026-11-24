@@ -92,6 +92,10 @@ turntable/
 ├── pyproject.toml          # Python version + dependency minimums
 ├── description.md          # This file
 ├── LICENSE
+├── tests/                  # pytest suite; fakes for linuxcnc and gpiozero (see "Testing")
+├── .github/workflows/tests.yml   # runs the suite on every push
+├── sudoers.d/
+│   └── turntable-shutdown  # the one sudo rule the Pi power-off needs (install with visudo -cf first)
 ├── systemd-units/          # Copies of the unit files below (install to /etc/systemd/system/)
 │   ├── linuxcnc.service
 │   ├── turntable-server.service
@@ -116,10 +120,10 @@ All are complete:
 
 | Unit                        | Runs                  | As       | Notes                                              |
 |-----------------------------|-----------------------|----------|----------------------------------------------------|
-| `linuxcnc.service`          | LinuxCNC + `turntable.ini` | turntable | `Restart=on-failure`                          |
-| `turntable-server.service`  | `turntable_server.py` | turntable | Port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` (not root). `RuntimeDirectory=turntable` creates `/run/turntable/` for the control socket. `TimeoutStopSec=10`. `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
-| `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends `shutdown` over `/run/turntable/control.sock`, or shuts down directly if the server isn't reachable |
-| `wifi-powersave-off.service`| `iw wlan0 set power_save off` | root | oneshot                                      |
+| `linuxcnc.service`          | LinuxCNC + `turntable.ini` | turntable | `Restart=always`                              |
+| `turntable-server.service`  | `turntable_server.py` | turntable | Port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` (not root). `RuntimeDirectory=turntable` creates `/run/turntable/` for the control socket. `TimeoutStopSec=10`. `Restart=always`, `PYTHONUNBUFFERED=1`, `WatchdogSec=60` (see "Stability measures"). `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
+| `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends `shutdown` over `/run/turntable/control.sock`, or shuts down directly if the server isn't reachable. `Restart=always` |
+| `wifi-powersave-off.service`| `iw wlan0 set power_save off` | root | oneshot, `Restart=on-failure` (wlan0 may not exist yet at boot) |
 
 ## Firewall
 Port 5007 (linuxcncrsh) restricted to loopback only:
@@ -153,7 +157,10 @@ simultaneous commands from several clients can't both be accepted).
    network or LinuxCNC are up.
 5. One background thread (`_startup`) runs, in order:
    1. `_init_network()` — reads eth0's address and netmask from the kernel and sets
-      `ALLOWED_NETWORK`. Retries 10× at 3 s intervals; on failure calls `on_error`.
+      `ALLOWED_NETWORK`. Retries 40× at 3 s intervals (two minutes, so a slow DHCP server
+      doesn't force a restart); on failure calls `on_error`. On success a `_watch_network`
+      thread starts: every 30 s it re-reads eth0 and adopts a changed network (a failed read
+      keeps the old one).
    2. `bridge.startup()` — retried up to 10 × 30 s if LinuxCNC isn't reachable yet, then
       ESTOP reset → enable → manual mode → **joint mode** → home joint 0
       → MDI mode, then `on_ready()`. (The old forced ESTOP-cycle workaround is gone; all NML
@@ -263,8 +270,11 @@ CCW moves are sent to LinuxCNC as negative degrees, formatted fixed-point
 ### Shutdown
 Only the word `shutdown` sent over the control socket (`/run/turntable/control.sock`, mode
 0600, owned by the server's user, which is also the button script's user) powers off the Pi: state `shutdown` (LED + broadcast), wait 3 s for
-sockets to flush, `sudo shutdown -h now` (the `turntable` user therefore needs passwordless sudo for this;
-that sudoers entry is not in the repo). A second request is ignored. SIGTERM/SIGINT
+sockets to flush, `sudo -n /usr/sbin/shutdown -h now` (`sudoers.d/turntable-shutdown` grants exactly that
+command; install it with `visudo -cf` first, then `install -m 0440`). If the command fails
+(missing sudoers entry, timeout), the shutdown state is withdrawn and the machine reports a
+recoverable `error` instead of sitting on "Shutting down" while still powered. A second
+request while one is in progress is ignored. SIGTERM/SIGINT
 (systemd stop/restart, a deploy, Ctrl-C) only make the server exit.
 
 ### LinuxCNC restarts
@@ -273,6 +283,39 @@ or restarting does not take the server down. At startup, `bridge.startup()` retr
 10 × 30 s for the NML bus. At runtime, the e-stop monitor treats 2 s of failed polls as
 "lost LinuxCNC" (state `booting`), rebuilds the NML objects once a second, and re-runs the
 startup sequence when polls succeed again.
+
+---
+
+## Stability measures
+What keeps the unit running unattended, and what each piece does and does not cover.
+
+- **Restart policy.** All three long-running units use `Restart=always`, so any exit (not
+  just a non-zero one) brings them back. A deliberate `systemctl stop` is still respected.
+- **systemd watchdog.** `turntable-server.service` has `WatchdogSec=60`; `_watchdog()` sends
+  a heartbeat every 20 s. It stops sending if the e-stop monitor hasn't completed a loop in
+  `MONITOR_STALL_SEC` (300 s, long enough for a full startup sequence inside the monitor).
+  If the whole process freezes (e.g. a `linuxcnc` call that blocks while holding the
+  interpreter lock), no heartbeat is sent at all. Either way systemd restarts the server.
+  This does not restart LinuxCNC itself, and the hardware e-stop never depends on it.
+- **Move bookkeeping.** The bridge is marked busy only for as long as something will clear it:
+  if announcing a move fails, the flag is released. A timed-out move is sent `abort`.
+  The LinuxCNC error channel is drained before each move, so messages LinuxCNC posted itself
+  (e-stop reset, enabling, homing) can't be blamed on the next move.
+- **Errors.** `on_error` records the first error atomically, so concurrent failures can't
+  overwrite each other or double-announce.
+- **LED.** One expiry timer at a time (a newer status cancels the old one; timers are
+  daemons), all LED changes under a lock, and a rejected-command flash never replaces an
+  e-stop, error or shutdown indication.
+- **Network.** Longer initial wait, and the subnet filter follows DHCP changes while running.
+- **Power button.** 50 ms `bounce_time` against contact bounce and electrical noise from the
+  stepper wiring; an exception in the fallback shutdown can't kill the button's event thread.
+
+## Testing
+`pytest` runs the real server, bridge and LED code against fake `linuxcnc` and `gpiozero`
+modules (`tests/conftest.py`): no Pi needed. Install `flask`, `flask-socketio`,
+`simple-websocket`, `pytest`, then run `pytest` from the repository root. GitHub Actions
+does the same on every push. The fake machine is deliberately small; it checks the logic in
+this repository, not LinuxCNC's behaviour, so the Pi-only checks under "Known Issues" still apply.
 
 ---
 
@@ -315,6 +358,14 @@ If an LED pattern or state changes, update this page too.
 ---
 
 ## Known Issues / Notes
+- **Untested on the Pi** (covered by the fake-hardware suite only): the systemd watchdog
+  (`systemctl show turntable-server -p WatchdogUSec`, then confirm a heartbeat line in the
+  journal and that `kill -STOP <pid>` leads to a restart after ~60 s), `bounce_time` on the
+  power button (confirm a normal press still shuts down), the sudoers entry (`sudo -n -l`
+  as `turntable`, then press the button with the server stopped), and `Restart=always` on
+  `linuxcnc.service` (`kill` it and confirm it returns and the page recovers).
+- `NoNewPrivileges=` and similar systemd sandboxing are intentionally **not** set on
+  `turntable-server.service`: the server shuts the Pi down through `sudo`, which they would block.
 - History: an earlier version used eventlet with `monkey_patch()`; on the Pi that stalled
   the server before it printed anything. Cause not pinned down; the move to threading mode
   made it moot.
