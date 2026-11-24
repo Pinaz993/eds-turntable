@@ -69,10 +69,9 @@ alternates red/blue for a few seconds, then the Pi powers off.
 - Flask 3.1.3
 - Flask-SocketIO 5.6.1 (python-socketio 5.16.2, python-engineio 4.13.2)
 - simple-websocket 1.1.0 (WebSocket support for Flask-SocketIO's threading mode; minimum
-  versions declared in `pyproject.toml`, which lists only Flask, Flask-SocketIO and
-  simple-websocket; there is no lockfile in the repo). **Not eventlet**: it is deprecated upstream and was dropped.
+  versions declared in `pyproject.toml` and pinned in `uv.lock`). **Not eventlet**: it is deprecated upstream and was dropped.
 - gpiozero 2.0.1
-- linuxcnc Python module (system package)
+- linuxcnc Python module (system package; not on PyPI, so `linuxcnc.pyi` stands in for it in IDEs)
 - Socket.IO **client** 4.8.1, vendored at `static/socket.io.min.js` (MIT licence in
   `static/socket.io.LICENSE`). Served locally rather than from a CDN so the unit works
   without internet and the library version is fixed. Flask-SocketIO does not serve the
@@ -89,7 +88,8 @@ turntable/
 ├── lcnc_bridge.py          # LinuxCNC Python API bridge (COMPLETE)
 ├── led.py                  # RGB LED status manager (COMPLETE)
 ├── shutdown_button.py      # Power button monitor (COMPLETE)
-├── pyproject.toml          # Python version + dependency minimums
+├── linuxcnc.pyi            # Type stub for the linuxcnc module, for IDEs only (ignored at runtime)
+├── pyproject.toml          # Python version + dependency minimums (uv.lock pins them)
 ├── description.md          # This file
 ├── LICENSE
 ├── tests/                  # pytest suite; fakes for linuxcnc and gpiozero (see "Testing")
@@ -312,8 +312,9 @@ What keeps the unit running unattended, and what each piece does and does not co
 
 ## Testing
 `pytest` runs the real server, bridge and LED code against fake `linuxcnc` and `gpiozero`
-modules (`tests/conftest.py`): no Pi needed. Install `flask`, `flask-socketio`,
-`simple-websocket`, `pytest`, then run `pytest` from the repository root. GitHub Actions
+modules (`tests/conftest.py`): no Pi needed. Install the dependencies in `pyproject.toml`
+(`uv sync`, or `pip install` them), then run `pytest` from the repository root. `gpiozero` is
+installed on a development machine only so the IDE can resolve it; the tests still use the fake. GitHub Actions
 does the same on every push. The fake machine is deliberately small; it checks the logic in
 this repository, not LinuxCNC's behaviour, so the Pi-only checks under "Known Issues" still apply.
 

@@ -1,7 +1,6 @@
 """turntable_server behaviour: validation, state, error handling, shutdown, watchdog."""
 import ipaddress
 import math
-import os
 import socket
 import subprocess
 import threading
@@ -115,6 +114,7 @@ def test_commands_refused_when_not_ready(server, flag):
 def test_busy_flag_is_released_if_the_move_cannot_be_started(server, monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError('cannot start thread')
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(server.socketio, 'start_background_task', boom)
     _send(server, {'degrees': 90, 'direction': 'CW'})
     assert not server.bridge.is_busy
@@ -146,6 +146,7 @@ def test_rejected_command_never_hides_an_error_led(server):
 
 def test_first_error_wins_under_concurrency(server, monkeypatch):
     published = []
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(server, '_publish_state', lambda: published.append(1))
     barrier = threading.Barrier(16)
 
@@ -169,7 +170,9 @@ def test_error_state_reports_recoverability(server):
 
 def _fake_run(returncode=0, stderr='', raises=None):
     def run(cmd, **kwargs):
+        # noinspection PyUnresolvedReferences
         run.cmd = cmd
+        # noinspection PyUnresolvedReferences
         run.kwargs = kwargs
         if raises:
             raise raises
@@ -179,11 +182,14 @@ def _fake_run(returncode=0, stderr='', raises=None):
 
 def test_successful_shutdown_stays_in_shutdown_state(server, monkeypatch):
     run = _fake_run()
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(server.subprocess, 'run', run)
     server._shutdown_sequence()
     assert server._current_state() == {'state': 'shutdown'}
+    # noinspection PyUnresolvedReferences
     assert run.cmd == server.SHUTDOWN_COMMAND
     # A hung sudo must not hold the shutdown thread forever.
+    # noinspection PyUnresolvedReferences
     assert run.kwargs['timeout'] == server.SHUTDOWN_COMMAND_TIMEOUT_SEC
 
 
@@ -193,6 +199,7 @@ def test_successful_shutdown_stays_in_shutdown_state(server, monkeypatch):
     _fake_run(raises=subprocess.TimeoutExpired('sudo', 30)),
 ])
 def test_failed_shutdown_is_reported_not_left_stuck(server, monkeypatch, run):
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(server.subprocess, 'run', run)
     server._shutdown_sequence()
     state = server._current_state()
@@ -215,6 +222,7 @@ def test_shutdown_command_matches_sudoers_entry():
 
 def test_network_change_is_picked_up(server, monkeypatch):
     new = ipaddress.IPv4Network('192.168.7.0/24')
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(server, '_get_interface_network', lambda _iface='eth0': new)
     assert server._refresh_network() is True
     assert server.ALLOWED_NETWORK == new
@@ -223,6 +231,7 @@ def test_network_change_is_picked_up(server, monkeypatch):
 
 def test_failed_network_read_keeps_the_old_network(server, monkeypatch):
     before = server.ALLOWED_NETWORK
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(server, '_get_interface_network', lambda _iface='eth0': None)
     assert server._refresh_network() is False
     assert server.ALLOWED_NETWORK == before

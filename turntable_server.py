@@ -346,7 +346,8 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
     # A thread that raises SystemExit is just leaving. The default hook ignores it too.
     if args.exc_type is SystemExit:
         return
-    name = args.thread.name if args.thread else 'unknown'
+    thread = args.thread
+    name = thread.name if thread is not None else 'unknown'
     print(f"[ERROR] Uncaught exception in thread '{name}':", flush=True)
     traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
     try:
@@ -374,7 +375,7 @@ LCNC_LOST_AFTER_SEC = 2.0
 # When polls started failing, or None while they succeed.
 _lcnc_unreachable_since: float | None = None
 # True once polls have failed for LCNC_LOST_AFTER_SEC.
-_lcnc_lost = False
+_lcnc_lost: bool = False
 
 def _note_lcnc_unreachable():
     """

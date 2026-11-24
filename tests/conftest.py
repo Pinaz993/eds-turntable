@@ -152,8 +152,11 @@ def bridge(machine):
     """A real LinuxCNCBridge on the fake machine, with fast polling and recorded callbacks."""
     from lcnc_bridge import LinuxCNCBridge
 
+    class RecordingBridge(LinuxCNCBridge):
+        calls: list
+
     calls = []
-    b = LinuxCNCBridge(
+    b = RecordingBridge(
         on_ready=lambda: calls.append(('ready',)),
         on_move_complete=lambda: calls.append(('complete',)),
         on_error=lambda msg, recoverable=True: calls.append(('error', msg, recoverable)),
@@ -192,12 +195,17 @@ def server(machine, monkeypatch):
     srv.bridge = b
 
     # Record LED requests instead of running them.
-    srv.led_calls = []
+    led_calls = []
+    srv.led_calls = led_calls
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(srv.led, 'set_status',
-                        lambda status, recalculate=None: srv.led_calls.append(status))
+                        lambda status, recalculate=None: led_calls.append(status))
     # Record background tasks instead of spawning threads.
-    srv.tasks = []
+    tasks = []
+    srv.tasks = tasks
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(srv.socketio, 'start_background_task',
-                        lambda fn, *a, **kw: srv.tasks.append((fn, a)))
+                        lambda fn, *a, **kw: tasks.append((fn, a)))
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(srv.socketio, 'sleep', lambda *_: None)
     return srv
