@@ -129,7 +129,9 @@ def _refresh_network() -> bool:
     """
     global ALLOWED_NETWORK
     network = _get_interface_network('eth0')
-    if network is None or network == ALLOWED_NETWORK:
+    if network is None:
+        return False
+    if network == ALLOWED_NETWORK:
         return False
     print(f"Network changed: {ALLOWED_NETWORK} -> {network.with_prefixlen}", flush=True)
     ALLOWED_NETWORK = network
@@ -384,10 +386,11 @@ def _note_lcnc_unreachable():
     """
     global _lcnc_unreachable_since, _lcnc_lost, _booted, _in_estop
     now = time.monotonic()
-    if _lcnc_unreachable_since is None:
-        _lcnc_unreachable_since = now
+    since = _lcnc_unreachable_since
+    if since is None:
+        since = _lcnc_unreachable_since = now
     bridge.reconnect(bridge.RECONNECT_INTERVAL)
-    if not _lcnc_lost and now - _lcnc_unreachable_since >= LCNC_LOST_AFTER_SEC:
+    if not _lcnc_lost and now - since >= LCNC_LOST_AFTER_SEC:
         _lcnc_lost = True
         print("[WARNING] Lost contact with LinuxCNC. Waiting for it to come back.", flush=True)
         # Whatever was happening is over. Show "booting" until we have re-run startup.
@@ -560,6 +563,8 @@ def handle_move_command(data=None) -> None:
 
     try:  # Both of these must be present and of the proper types:
         # `degrees` must be a float (or castable as such)
+        # A missing `degrees` is None, and float(None) raises the TypeError caught below.
+        # noinspection PyTypeChecker
         degrees   = float(raw_degrees)
         # `direction` must be a string (or castable as such)
         direction = str(data.get('direction', ''))

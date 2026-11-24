@@ -37,7 +37,7 @@ class FakeMachine:
         self.mdi_log = []             # every MDI command received
         self.abort_count = 0
         self.move_polls = 3           # how many stat polls a move stays "in progress" for
-        self._moving_polls_left = 0
+        self.moving_polls_left = 0
         self.on_mdi = None            # optional hook: called with the command string
 
 
@@ -47,25 +47,28 @@ MACHINE = FakeMachine()
 def _build_fake_linuxcnc() -> types.ModuleType:
     mod = types.ModuleType('linuxcnc')
 
+    # noinspection PyPep8Naming
     class error(Exception):
         pass
 
+    # noinspection PyPep8Naming
     class stat:
         def __init__(self):
             self.__dict__['_m'] = MACHINE
 
         def poll(self):
             m = self._m
-            if m._moving_polls_left > 0:
-                m._moving_polls_left -= 1
+            if m.moving_polls_left > 0:
+                m.moving_polls_left -= 1
                 m.inpos = False
                 m.interp_state = 2
-                if m._moving_polls_left == 0:
+                if m.moving_polls_left == 0:
                     m.inpos, m.interp_state = True, 1
 
         def __getattr__(self, name):
             return getattr(self.__dict__['_m'], name)
 
+    # noinspection PyPep8Naming
     class command:
         def state(self, s): pass
         def mode(self, m): pass
@@ -74,16 +77,17 @@ def _build_fake_linuxcnc() -> types.ModuleType:
 
         def mdi(self, text):
             MACHINE.mdi_log.append(text)
-            MACHINE._moving_polls_left = MACHINE.move_polls
+            MACHINE.moving_polls_left = MACHINE.move_polls
             MACHINE.inpos = False
             if MACHINE.on_mdi:
                 MACHINE.on_mdi(text)
 
         def abort(self):
             MACHINE.abort_count += 1
-            MACHINE._moving_polls_left = 0
+            MACHINE.moving_polls_left = 0
             MACHINE.inpos, MACHINE.interp_state = True, 1
 
+    # noinspection PyPep8Naming
     class error_channel:
         def poll(self):
             return MACHINE.errors.pop(0) if MACHINE.errors else None

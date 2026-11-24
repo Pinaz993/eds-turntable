@@ -1,8 +1,19 @@
 """StatusLED: one expiry timer at a time, and a bad call must not touch the LED."""
 import threading
 import time
+from typing import Protocol, cast
 
 import pytest
+
+
+class _RecordingLED(Protocol):
+    """What tests/conftest.py's FakeRGBLED records. The real RGBLED has neither attribute."""
+    pins: tuple[int, int, int]
+    history: list
+
+
+def _fake_led(status_led) -> _RecordingLED:
+    return cast(_RecordingLED, status_led.led)
 
 
 @pytest.fixture
@@ -10,18 +21,18 @@ def status_led(monkeypatch):
     from led import StatusLED
     monkeypatch.setitem(StatusLED.status_settings['command_rejected'], 'expr_time', 0.2)
     led = StatusLED()
-    led.led.history.clear()
+    _fake_led(led).history.clear()
     return led
 
 
 def test_led_is_wired_to_the_documented_pins(status_led):
     # GPIO 19 red, 20 green, 21 blue (see description.md).
-    assert status_led.led.pins == (19, 20, 21)
+    assert _fake_led(status_led).pins == (19, 20, 21)
 
 
 def test_blinking_status_passes_all_four_blink_settings(status_led):
     status_led.set_status('estop_active')
-    assert status_led.led.history[-1] == ('blink', (1, 0, 0), (1, 0.5, 0), 0.5, 0.5)
+    assert _fake_led(status_led).history[-1] == ('blink', (1, 0, 0), (1, 0.5, 0), 0.5, 0.5)
 
 
 def test_newer_status_cancels_pending_expiry(status_led):
@@ -52,10 +63,10 @@ def test_replacing_with_a_steady_status_cancels_expiry(status_led):
 
 
 def test_expiring_status_without_callback_leaves_led_alone(status_led):
-    before = list(status_led.led.history)
+    before = list(_fake_led(status_led).history)
     with pytest.raises(ValueError):
         status_led.set_status('command_rejected')
-    assert status_led.led.history == before
+    assert _fake_led(status_led).history == before
 
 
 def test_unknown_status_is_rejected(status_led):

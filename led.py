@@ -3,7 +3,17 @@
 
 from gpiozero import RGBLED
 from threading import Lock, Timer
-from typing import Callable
+from typing import Callable, TypedDict
+
+
+class StatusSetting(TypedDict):
+    """How one status looks. A colour is an (R, G, B) tuple with each part from 0 to 1."""
+    on_color: tuple[float, float, float]
+    off_color: tuple[float, float, float] | None
+    on_time: float | None
+    off_time: float | None
+    expr_time: float | None
+
 
 class StatusLED:
     """
@@ -31,7 +41,7 @@ class StatusLED:
 
     """
     
-    status_settings = {
+    status_settings: dict[str, StatusSetting] = {
             'booting': { # The system is starting up.
                 'on_color': (1, 0, 0), # Red
                 'off_color': None, # No blink 
@@ -125,16 +135,19 @@ class StatusLED:
             if self._expiry_timer is not None:
                 self._expiry_timer.cancel()
                 self._expiry_timer = None
-            if setting['on_time']: # Is the LED supposed to blink?
+            on_time, off_time = setting['on_time'], setting['off_time']
+            if on_time and off_time: # Is the LED supposed to blink? (A blinking status has both times.)
                 # Yes. Get the LED to use all four LED settings from the dict.
                 self.led.blink(on_color=setting['on_color'], off_color=setting['off_color'],
-                                on_time=setting['on_time'], off_time=setting['off_time'])
+                                on_time=on_time, off_time=off_time)
             else: # No, the LED is not supposed to blink.
                 self.led.color = setting['on_color']
-            if setting['expr_time']: # Is the status supposed to expire?
+            expr_time = setting['expr_time']
+            # (An expiring status always has a callback: that was checked above.)
+            if expr_time and recalculate is not None: # Is the status supposed to expire?
                 # Set a timer to recalculate machine status, with the proper time.
                 # Daemon: a pending timer must never hold up process exit.
-                timer = Timer(setting['expr_time'], recalculate)
+                timer = Timer(expr_time, recalculate)
                 timer.daemon = True
                 timer.start()
                 self._expiry_timer = timer

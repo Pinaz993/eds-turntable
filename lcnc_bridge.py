@@ -47,7 +47,7 @@ class SafeStatus:
 
     @property
     def enabled(self) -> bool:
-        return self._stat.enabled
+        return bool(self._stat.enabled)
 
     @property
     def task_mode(self) -> int:
