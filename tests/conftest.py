@@ -6,6 +6,7 @@ The fakes are installed in sys.modules before anything under test is imported.
 """
 import sys
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 class FakeMachine:
     """The 'machine' behind the fake linuxcnc module. Tests poke it directly."""
+
+    # Declared here so every attribute is visible outside reset(), which sets the values.
+    estop: bool
+    enabled: bool
+    task_state: int
+    task_mode: int
+    motion_mode: int
+    homed: list[int]
+    inpos: bool
+    queue: int
+    interp_state: int
+    errors: list
+    mdi_log: list
+    abort_count: int
+    move_polls: int
+    moving_polls_left: int
+    on_mdi: Callable[[str], None] | None
 
     def __init__(self):
         self.reset()
@@ -75,21 +93,24 @@ def _build_fake_linuxcnc() -> types.ModuleType:
         def home(self, j): pass
         def teleop_enable(self, e): pass
 
-        def mdi(self, text):
+        @staticmethod
+        def mdi(text):
             MACHINE.mdi_log.append(text)
             MACHINE.moving_polls_left = MACHINE.move_polls
             MACHINE.inpos = False
             if MACHINE.on_mdi:
                 MACHINE.on_mdi(text)
 
-        def abort(self):
+        @staticmethod
+        def abort():
             MACHINE.abort_count += 1
             MACHINE.moving_polls_left = 0
             MACHINE.inpos, MACHINE.interp_state = True, 1
 
     # noinspection PyPep8Naming
     class error_channel:
-        def poll(self):
+        @staticmethod
+        def poll():
             return MACHINE.errors.pop(0) if MACHINE.errors else None
 
     mod.error = error
@@ -108,7 +129,7 @@ def _build_fake_linuxcnc() -> types.ModuleType:
 
 class FakeRGBLED:
     """
-    Records what the LED was told to do. `history` holds ('color', rgb) for a steady colour and
+    Records what the LED was told to do. `history` holds ('color', rgb) for a steady color and
     ('blink', on_color, off_color, on_time, off_time) for a flashing one. `pins` is (red, green, blue).
     """
     instances = []

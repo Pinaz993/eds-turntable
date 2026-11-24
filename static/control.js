@@ -3,6 +3,14 @@
 // The server decides what state the machine is in; this page only displays it.
 // Until the server has said so, the page does not know, and every control stays off.
 
+/**
+ * The part of the Socket.IO client's socket that this page uses.
+ * @typedef {object} SocketLike
+ * @property {boolean} connected
+ * @property {(event: string, handler: (...args: any[]) => void) => void} on
+ * @property {(event: string, ...args: any[]) => void} emit
+ */
+
 (() => {
   'use strict';
 
@@ -117,7 +125,7 @@
   // ---------- Rendering ----------
 
   function render() {
-    // A state we don't recognise is treated as "unknown": better to lock up than to guess.
+    // A state we don't recognize is treated as "unknown": better to lock up than to guess.
     const known = Object.prototype.hasOwnProperty.call(COPY, machineState);
     const shown = known ? machineState : 'unknown';
     const copy = COPY[shown];
@@ -163,7 +171,9 @@
 
   // ---------- Socket ----------
 
-  const socket = io();
+  // `io` is defined by socket.io.min.js, which control.html loads before this file.
+  // noinspection JSUnresolvedReference
+  const socket = /** @type {SocketLike} */ (io());
 
   socket.on('connect', () => {
     // Whatever we knew before is stale. Find out again, and only then trust the controls.

@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#d9dcd6">
   <title>Turntable</title>
+  <!--suppress HtmlUnknownTarget -->
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <main class="panel">
 
     <!-- Mirrors the physical status LED. Text and lamp are driven by control.js. -->
-    <header class="status" id="status" data-state="unknown" role="status" aria-live="polite">
+    <div class="status" id="status" data-state="unknown" role="status" aria-live="polite">
       <span class="lamp" aria-hidden="true"></span>
       <div class="status-text">
         <h1 id="status-title">Checking machine</h1>
         <p id="status-detail">Asking the turntable for its status.</p>
       </div>
-    </header>
+    </div>
 
     <form id="move-form" novalidate>
       <!-- Everything in here is switched off unless the machine reports "ready". -->
@@ -63,13 +64,17 @@
       </fieldset>
     </form>
 
+    <!--suppress HtmlUnknownTarget -->
     <footer class="foot"><a href="{{ url_for('docs') }}">How this works</a></footer>
   </main>
 
   <div class="toast" id="toast" role="alert" hidden></div>
 
+  <!--suppress HtmlUnknownTarget -->
   <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+  <!--suppress HtmlUnknownTarget -->
   <script src="{{ url_for('static', filename='presets.js') }}"></script>
+  <!--suppress HtmlUnknownTarget -->
   <script src="{{ url_for('static', filename='control.js') }}"></script>
 </body>
 </html>

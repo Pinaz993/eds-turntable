@@ -321,7 +321,7 @@ class LinuxCNCBridge:
 
         Polls first for the move to start (so we do not race past it on a fast machine),
         then for it to end. An e-stop or loss of drive power ends the wait immediately:
-        the move is dead, and what LinuxCNC reports afterwards says nothing about whether
+        the move is dead, and what LinuxCNC reports afterward says nothing about whether
         it finished.
 
         Returns

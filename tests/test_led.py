@@ -1,7 +1,7 @@
 """StatusLED: one expiry timer at a time, and a bad call must not touch the LED."""
 import threading
 import time
-from typing import Protocol, cast
+from typing import Protocol
 
 import pytest
 
@@ -13,12 +13,14 @@ class _RecordingLED(Protocol):
 
 
 def _fake_led(status_led) -> _RecordingLED:
-    return cast(_RecordingLED, status_led.led)
+    return status_led.led
 
 
 @pytest.fixture
 def status_led(monkeypatch):
     from led import StatusLED
+    # A TypedDict is a plain dict at runtime, but the IDE's type checker doesn't see it as a Mapping.
+    # noinspection PyTypeChecker
     monkeypatch.setitem(StatusLED.status_settings['command_rejected'], 'expr_time', 0.2)
     led = StatusLED()
     _fake_led(led).history.clear()
@@ -47,7 +49,7 @@ def test_newer_status_cancels_pending_expiry(status_led):
     time.sleep(0.1)
     status_led.set_status('command_rejected', recalculate=recalc)  # a second rejected command
     time.sleep(0.15)
-    # 0.25 s after the first: its timer would have fired by now if it had not been cancelled.
+    # 0.25 s after the first: its timer would have fired by now if it had not been canceled.
     assert count == []
     assert fired.wait(1.0)
     time.sleep(0.1)

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#d9dcd6">
   <title>How the turntable works</title>
+  <!--suppress HtmlUnknownTarget -->
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -45,7 +46,7 @@
         </li>
         <li>
           <span class="swatch flash" style="--a: var(--led-yellow); --b: var(--led-off); --period: 0.5s" aria-hidden="true"></span>
-          <div><strong>Yellow flashing for 2 seconds: command refused.</strong> The panel says why. The light then returns to its normal colour.</div>
+          <div><strong>Yellow flashing for 2 seconds: command refused.</strong> The panel says why. The light then returns to its normal color.</div>
         </li>
         <li>
           <span class="swatch flash" style="--a: var(--led-red); --b: var(--led-yellow); --period: 1s" aria-hidden="true"></span>
@@ -60,7 +61,7 @@
           <div><strong>Red and blue alternating: shutting down.</strong> The turntable is powering off.</div>
         </li>
       </ul>
-      <p>A grey light on the panel means the panel has lost contact with the turntable. It reconnects by itself.</p>
+      <p>A gray light on the panel means the panel has lost contact with the turntable. It reconnects by itself.</p>
     </section>
 
     <section>
@@ -88,6 +89,7 @@
       <p>Press the power button once to shut the turntable down. The light alternates red and blue, the panel shows <strong>Shutting down</strong>, and the Pi powers off after a few seconds. Press the button again to start it up.</p>
     </section>
 
+    <!--suppress HtmlUnknownTarget -->
     <footer class="foot"><a href="{{ url_for('index') }}">Back to the control panel</a></footer>
   </main>
 </body>

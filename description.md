@@ -72,7 +72,7 @@ alternates red/blue for a few seconds, then the Pi powers off.
   versions declared in `pyproject.toml` and pinned in `uv.lock`). **Not eventlet**: it is deprecated upstream and was dropped.
 - gpiozero 2.0.1
 - linuxcnc Python module (system package; not on PyPI, so `linuxcnc.pyi` stands in for it in IDEs)
-- Socket.IO **client** 4.8.1, vendored at `static/socket.io.min.js` (MIT licence in
+- Socket.IO **client** 4.8.1, vendored at `static/socket.io.min.js` (MIT license in
   `static/socket.io.LICENSE`). Served locally rather than from a CDN so the unit works
   without internet and the library version is fixed. Flask-SocketIO does not serve the
   client itself. Reference it as `<script src="/static/socket.io.min.js"></script>`.
@@ -106,7 +106,7 @@ turntable/
 │   └── docs.html           # Documentation page (COMPLETE)
 ├── static/
 │   ├── socket.io.min.js    # Socket.IO client 4.8.1 (COMPLETE, vendored)
-│   ├── socket.io.LICENSE   # MIT licence for the above
+│   ├── socket.io.LICENSE   # MIT license for the above
 │   ├── control.js          # WebSocket + UI logic (COMPLETE)
 │   ├── presets.js          # Quick-pick angles, empty for now (COMPLETE)
 │   └── style.css           # Styles (COMPLETE)
@@ -139,8 +139,8 @@ Managed by `iptables-persistent`.
 
 Listens on `0.0.0.0:80`. Runs in Flask-SocketIO's plain `threading` mode on Werkzeug's
 built-in server (`allow_unsafe_werkzeug=True`, required under systemd; acceptable for a few
-clients on a private LAN behind the subnet filter; gunicorn with one worker and several
-threads is the step up if that ever changes). Every connection, background task and timer
+clients on a private LAN behind the subnet filter; Gunicorn with one worker and several
+threads is the upgrade path if that ever changes). Every connection, background task and timer
 is a real OS thread, so blocking calls like `time.sleep` are fine and nothing is
 monkey-patched. Shared state is protected by locks: the bridge's NML lock (one
 `threading.Lock` for all LinuxCNC access), `_publish_lock` (state announcements go out in
@@ -164,7 +164,7 @@ simultaneous commands from several clients can't both be accepted).
    2. `bridge.startup()` — retried up to 10 × 30 s if LinuxCNC isn't reachable yet, then
       ESTOP reset → enable → manual mode → **joint mode** → home joint 0
       → MDI mode, then `on_ready()`. (The old forced ESTOP-cycle workaround is gone; all NML
-      access is now serialised by one lock in the bridge.) On failure → `on_error`.
+      access is now serialized by one lock in the bridge.) On failure → `on_error`.
    3. `_monitor_estop` thread started. Skipped only if the failure can't be cleared by an
       e-stop (see "Errors" below).
 6. The web server accepts connections throughout. Until step 3.i finishes, everything is
@@ -203,7 +203,7 @@ to whatever the current state calls for.
 
 **Client → server**
 
-| Event          | Payload                                  | Behaviour |
+| Event          | Payload                                  | Behavior |
 |----------------|------------------------------------------|-----------|
 | `get_state`    | none                                     | Server replies with `machine_status` to the sender only. |
 | `move_command` | `{"degrees": 210, "direction": "CCW"}`   | Validated, then executed. See below. |
@@ -275,7 +275,7 @@ command; install it with `visudo -cf` first, then `install -m 0440`). If the com
 (missing sudoers entry, timeout), the shutdown state is withdrawn and the machine reports a
 recoverable `error` instead of sitting on "Shutting down" while still powered. A second
 request while one is in progress is ignored. SIGTERM/SIGINT
-(systemd stop/restart, a deploy, Ctrl-C) only make the server exit.
+(systemd stop/restart, a deployment, Ctrl-C) only make the server exit.
 
 ### LinuxCNC restarts
 `turntable-server.service` `Wants=` LinuxCNC rather than requiring it, so LinuxCNC crashing
@@ -316,7 +316,7 @@ modules (`tests/conftest.py`): no Pi needed. Install the dependencies in `pyproj
 (`uv sync`, or `pip install` them), then run `pytest` from the repository root. `gpiozero` is
 installed on a development machine only so the IDE can resolve it; the tests still use the fake. GitHub Actions
 does the same on every push. The fake machine is deliberately small; it checks the logic in
-this repository, not LinuxCNC's behaviour, so the Pi-only checks under "Known Issues" still apply.
+this repository, not LinuxCNC's behavior, so the Pi-only checks under "Known Issues" still apply.
 
 ---
 
@@ -331,14 +331,14 @@ The client never assumes a state it hasn't been told.
 - On every Socket.IO `connect` (including reconnects) it resets to unknown and emits
   `get_state`; it retries every 3 s while still unknown.
 - `disconnect` / `connect_error` → client-only **disconnected** state.
-- Only `ready` enables the controls. Any unrecognised state is treated as unknown.
+- Only `ready` enables the controls. Any unrecognized state is treated as unknown.
 - After sending a move the controls lock until the server answers (3 s safety timeout).
 - A client that joins mid-move shows "A move is in progress"; it only learns the angle
   and direction for moves it sees start.
 
 ### Layout
-- Status banner on top with a lamp that mirrors the physical LED (same colours and flash
-  patterns; flashing stops under `prefers-reduced-motion`, colour remains), a state title,
+- Status banner on top with a lamp that mirrors the physical LED (same colors and flash
+  patterns; flashing stops under `prefers-reduced-motion`, color remains), a state title,
   and a detail line (last move, current move, error message, or what to do).
 - Direction toggle (CW / CCW), angle input (number, `0 < x ≤ 360`, same rule as the server,
   inline error text), presets row, Rotate button, link to `/docs`.
@@ -352,7 +352,7 @@ skipped. Buttons wrap onto extra rows as needed.
 
 ### docs.html
 Static page served at `/docs`, reusing `style.css` (a documentation section at the end of
-that file). Covers: using the control panel, what the LED colours mean (kept in step with
+that file). Covers: using the control panel, what the LED colors mean (kept in step with
 the state table above), the e-stop procedure, what to do on an error, and the power button.
 If an LED pattern or state changes, update this page too.
 

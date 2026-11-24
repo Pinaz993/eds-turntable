@@ -1,4 +1,4 @@
-"""LinuxCNCBridge behaviour against the fake machine."""
+"""LinuxCNCBridge behavior against the fake machine."""
 
 
 def test_cw_move_completes(bridge, machine):

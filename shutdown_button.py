@@ -43,7 +43,7 @@ def shutdown() -> None:
             if result.returncode:
                 print(f"[ERROR] Shutdown command failed (exit status {result.returncode})", flush=True)
         except (OSError, subprocess.SubprocessError) as exc:
-            # This runs on gpiozero's event thread. An exception escaping it would end that
+            # This runs on the gpiozero event thread. An exception escaping it would end that
             # thread, and the button would silently stop working until the service restarts.
             print(f"[ERROR] Shutdown command failed ({type(exc).__name__}: {exc})", flush=True)
 

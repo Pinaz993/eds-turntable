@@ -81,7 +81,7 @@ def _get_interface_network(iface: str = 'eth0') -> ipaddress.IPv4Network | None:
         return None # Return nothing, so we can know whether to try again.
 # End _get_interface_network()
 
-# Initialised to None — the subnet filter fails closed until _init_network()
+# Initialized to None — the subnet filter fails closed until _init_network()
 # succeeds and sets this to a real network.
 ALLOWED_NETWORK: ipaddress.IPv4Network | None = None
 
@@ -133,7 +133,7 @@ def _refresh_network() -> bool:
         return False
     if network == ALLOWED_NETWORK:
         return False
-    print(f"Network changed: {ALLOWED_NETWORK} -> {network.with_prefixlen}", flush=True)
+    print(f"Network changed: {ALLOWED_NETWORK} -> {network}", flush=True)
     ALLOWED_NETWORK = network
     return True
 # End _refresh_network()
@@ -147,15 +147,15 @@ def _watch_network():
 
 # Make a new Flask app.
 app = Flask(__name__)
-# We need a secret key for web-socket stuff. Will be invalidated on machine restart.
+# We need a secret key for WebSocket stuff. Will be invalidated on machine restart.
 # Might need to switch to a static solution, based on user feedback.
 app.config['SECRET_KEY'] = secrets.token_hex(32)
-# Make a new socket IO controller/interface.
+# Make a new Socket.IO controller/interface.
 socketio = SocketIO(app, async_mode='threading')
 # The Status LED on the machine, for communicating to users that don't have a client open
 led    = StatusLED()
 # The bridge for communicating with LinuxCNC.
-# Initialised in main so the LED is set first
+# Initialized in main so the LED is set first
 bridge: LinuxCNCBridge
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ _in_estop: bool = False
 _shutting_down: bool = False
 
 # Several threads (web requests, the e-stop monitor, move threads) change and announce state.
-# Announcements are serialised so a stale state can never be broadcast after a newer one.
+# Announcements are serialized so a stale state can never be broadcast after a newer one.
 _publish_lock = threading.Lock()
 # Makes "is the machine ready?" and "mark it busy" a single step, so two clients sending a
 # move at the same instant can't both be accepted.
@@ -233,7 +233,7 @@ def _publish_state() -> None:
 
 def _recalculate_led_status() -> None:
     """Called by StatusLED after a transient LED status expires."""
-    # Under the publish lock, so a state change can't land between working out the state and
+    # Under the publishing lock, so a state change can't land between working out the state and
     # showing it (which would leave the LED showing the old one).
     with _publish_lock:
         led.set_status(_LED_FOR_STATE[_current_state()['state']])
@@ -338,7 +338,7 @@ def on_error(message: str, recoverable: bool = True):
     _publish_state()
 # End on_error()
 
-# Safety net for every thread started through `threading` (socketio's background tasks included).
+# Safety net for every thread started through `threading` (including Socket.IO background tasks).
 # Without it, an uncaught exception prints a traceback to stderr at best, and the thread just stops.
 # If that thread was a move, the UI would sit on "Moving" forever. If it was the e-stop monitor or the
 # shutdown-button listener, a safety function would quietly stop working.
@@ -352,6 +352,7 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
     name = thread.name if thread is not None else 'unknown'
     print(f"[ERROR] Uncaught exception in thread '{name}':", flush=True)
     traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+    # noinspection PyBroadException
     try:
         # Not recoverable: a thread that died unexpectedly may be the e-stop monitor itself,
         # in which case nothing is left to notice an e-stop press, so "clearable with e-stop" would be a lie.
@@ -427,12 +428,13 @@ def _monitor_estop():
     global _monitor_heartbeat
     while _estop_monitor_running:
         _monitor_heartbeat = time.monotonic()
+        # noinspection PyBroadException
         try:
             # If `linuxcnc.stat()` isn't available, we need to be prepared
             try:
                 # Grab the latest information
                 bridge.status.poll()
-                # Polling worked. If LinuxCNC had gone away and is back, re-initialise first.
+                # Polling worked. If LinuxCNC had gone away and is back, re-initialize first.
                 _note_lcnc_reachable()
                 # stat.estop is a direct boolean — True when e-stop is active
                 currently_estopped = bool(bridge.status.estop)
@@ -499,7 +501,7 @@ def _monitor_estop():
             traceback.print_exc()
         # End except
         # Wait for a quarter of a second.
-        # Excuse me, socketio people. Please stop requiring an int when you can easily take a float.
+        # Excuse me, Socket.IO people. Please stop requiring an int when you can easily take a float.
         # noinspection PyTypeChecker
         socketio.sleep(0.25)
 # End _monitor_estop()
@@ -516,6 +518,7 @@ def handle_connect(_auth=None):
     # The HTTP subnet filter doesn't cover WebSockets, so check here too.
     if not _client_allowed():
         return False
+    return True
 # End handle_connect()
 
 @socketio.on('get_state')
@@ -614,6 +617,7 @@ def handle_move_command(data=None) -> None:
         # The machine is marked busy, but nothing will ever mark it idle again: the thread that
         # does that never started. Left alone, the page would show "Moving" until an e-stop.
         bridge.clear_busy()
+        # noinspection PyBroadException
         try:
             _publish_state()
         except Exception:
@@ -666,7 +670,7 @@ def _shutdown_sequence():
 def _control_listener():
     """
     Accepts one-word commands on a Unix socket that only this server's user can open.
-    Currently the only command is "shutdown". Runs as a background thread.
+    Currently, the only command is "shutdown". Runs as a background thread.
     """
     try:
         # Remove a stale socket file left by a previous run.
@@ -799,7 +803,7 @@ def _startup():
     socketio.start_background_task(_watch_network)
     # Now bring LinuxCNC up.
     bridge.startup()
-    # A failure the e-stop can't clear leaves nothing to monitor.
+    # The monitor only helps when the e-stop can clear the failure. Otherwise, skip it.
     if _system_error and not _error_recoverable:
         return
     # E-stop monitor runs independently for its entire lifetime. It also runs after a recoverable
@@ -829,5 +833,5 @@ if __name__ == '__main__':
     socketio.start_background_task(_startup)
     # `allow_unsafe_werkzeug`: threading mode uses Werkzeug's built-in server, which refuses to run
     # under systemd without this. Acceptable here: a handful of clients on a private LAN, behind the
-    # subnet filter. (If that ever changes, gunicorn with one worker and several threads is the step up.)
+    # subnet filter. (If that ever changes, Gunicorn with one worker and several threads is the upgrade path.)
     socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, allow_unsafe_werkzeug=True)

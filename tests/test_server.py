@@ -1,4 +1,4 @@
-"""turntable_server behaviour: validation, state, error handling, shutdown, watchdog."""
+"""turntable_server behavior: validation, state, error handling, shutdown, watchdog."""
 import ipaddress
 import math
 import socket
@@ -21,7 +21,7 @@ def _send(server, payload):
     client.get_received()
     try:
         client.emit('move_command', payload)
-    except Exception:
+    except RuntimeError:
         pass  # a handler that raises is part of what some tests check
     received = client.get_received()
     client.disconnect()

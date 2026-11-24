@@ -7,7 +7,7 @@ from typing import Callable, TypedDict
 
 
 class StatusSetting(TypedDict):
-    """How one status looks. A colour is an (R, G, B) tuple with each part from 0 to 1."""
+    """How one status looks. A color is an (R, G, B) tuple with each part from 0 to 1."""
     on_color: tuple[float, float, float]
     off_color: tuple[float, float, float] | None
     on_time: float | None
@@ -97,7 +97,7 @@ class StatusLED:
 
     def __init__(self) -> None:
         # set_status() is called from request threads, the e-stop monitor, move threads and
-        # expiry timers. The lock keeps two of them from interleaving a colour change with a
+        # expiry timers. The lock keeps two of them from interleaving a color change with a
         # timer change.
         self._lock = Lock()
         # The pending "status expired" timer, if any. Only one may exist at a time: a newer

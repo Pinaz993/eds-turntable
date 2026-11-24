@@ -8,7 +8,7 @@
   --rule:   #b9beb7;
   --focus:  #1d5fd1;
 
-  /* Same colours as the physical LED (see led.py). */
+  /* Same colors as the physical LED (see led.py). */
   --led-green:  #1f8a4c;
   --led-blue:   #1d5fd1;
   --led-red:    #c62828;
@@ -23,6 +23,8 @@
 
 html { background: var(--enamel); }
 
+/* The second min-height is deliberate: browsers without `dvh` keep the `vh` line above it. */
+/*noinspection CssOverwrittenProperties*/
 body {
   margin: 0;
   min-height: 100vh;
@@ -195,6 +197,8 @@ fieldset:disabled { opacity: 0.45; }
 /* Presets: wraps onto as many rows as Ed needs. */
 .presets { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
+/* The buttons are created by static/control.js, which the IDE can't see. */
+/*noinspection CssUnusedSymbol*/
 .preset {
   flex: 1 1 5rem;
   min-height: 3.25rem;
@@ -210,7 +214,9 @@ fieldset:disabled { opacity: 0.45; }
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
+/*noinspection CssUnusedSymbol*/
 .preset:active { background: var(--rule); }
+/*noinspection CssUnusedSymbol*/
 .preset:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 /* Rotate */
@@ -259,7 +265,7 @@ fieldset:disabled { opacity: 0.45; }
 
 /* ---------- Motion ---------- */
 
-/* Lamp colour still shows the state; only the flashing stops. */
+/* Lamp color still shows the state; only the flashing stops. */
 @media (prefers-reduced-motion: reduce) {
   .lamp { animation: none; }
 }
