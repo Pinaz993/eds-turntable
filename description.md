@@ -167,7 +167,7 @@ simultaneous commands from several clients can't both be accepted).
       access is now serialised by one lock in the bridge.) On failure → `on_error`.
    3. `_monitor_estop` thread started. Skipped only if the failure can't be cleared by an
       e-stop (see "Errors" below).
-4. The web server accepts connections throughout. Until step 3.i finishes, everything is
+6. The web server accepts connections throughout. Until step 3.i finishes, everything is
    refused (fails closed).
 
 If the hardware e-stop is engaged at boot, `startup_sequence()` returns early without

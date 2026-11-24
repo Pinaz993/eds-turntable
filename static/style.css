@@ -28,7 +28,7 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
-  font-family: var(--font);
+  font-family: var(--font), serif;
   font-size: 1rem;
   line-height: 1.4;
   color: var(--ink);
