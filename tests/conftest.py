@@ -103,10 +103,14 @@ def _build_fake_linuxcnc() -> types.ModuleType:
 # ---------------------------------------------------------------------------
 
 class FakeRGBLED:
-    """Records what the LED was told to do. `history` holds ('color', rgb) / ('blink', on_color)."""
+    """
+    Records what the LED was told to do. `history` holds ('color', rgb) for a steady colour and
+    ('blink', on_color, off_color, on_time, off_time) for a flashing one. `pins` is (red, green, blue).
+    """
     instances = []
 
     def __init__(self, red, green, blue):
+        self.pins = (red, green, blue)
         self.history = []
         FakeRGBLED.instances.append(self)
 
@@ -119,7 +123,7 @@ class FakeRGBLED:
         self.history.append(('color', value))
 
     def blink(self, on_color, off_color, on_time, off_time):
-        self.history.append(('blink', on_color))
+        self.history.append(('blink', on_color, off_color, on_time, off_time))
 
 
 def _build_fake_gpiozero() -> types.ModuleType:

@@ -170,6 +170,7 @@ def test_error_state_reports_recoverability(server):
 def _fake_run(returncode=0, stderr='', raises=None):
     def run(cmd, **kwargs):
         run.cmd = cmd
+        run.kwargs = kwargs
         if raises:
             raise raises
         return subprocess.CompletedProcess(cmd, returncode, '', stderr)
@@ -182,6 +183,8 @@ def test_successful_shutdown_stays_in_shutdown_state(server, monkeypatch):
     server._shutdown_sequence()
     assert server._current_state() == {'state': 'shutdown'}
     assert run.cmd == server.SHUTDOWN_COMMAND
+    # A hung sudo must not hold the shutdown thread forever.
+    assert run.kwargs['timeout'] == server.SHUTDOWN_COMMAND_TIMEOUT_SEC
 
 
 @pytest.mark.parametrize('run', [

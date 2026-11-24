@@ -14,6 +14,16 @@ def status_led(monkeypatch):
     return led
 
 
+def test_led_is_wired_to_the_documented_pins(status_led):
+    # GPIO 19 red, 20 green, 21 blue (see description.md).
+    assert status_led.led.pins == (19, 20, 21)
+
+
+def test_blinking_status_passes_all_four_blink_settings(status_led):
+    status_led.set_status('estop_active')
+    assert status_led.led.history[-1] == ('blink', (1, 0, 0), (1, 0.5, 0), 0.5, 0.5)
+
+
 def test_newer_status_cancels_pending_expiry(status_led):
     fired = threading.Event()
     count = []
