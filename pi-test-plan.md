@@ -12,24 +12,24 @@ Run as the `turntable` user unless noted. Watch the journal in a second terminal
 ## 0. Pre-flight
 | # | Check | Expect | Result |
 |---|-------|--------|--------|
-| 0.1 | `sudo visudo -cf /etc/sudoers.d/turntable-shutdown`, then `ls -l` it | parsed OK; `-r--r----- root root` | |
-| 0.2 | `sudo -n -l` | lists `/usr/sbin/shutdown -h now` NOPASSWD | |
-| 0.3 | `systemctl show turntable-server -p User -p WatchdogUSec -p Restart` | `turntable`, `1min`, `always` | |
-| 0.4 | `ls -l /run/turntable/control.sock` | `srw-------` owned by `turntable` | |
-| 0.5 | journal has `Watchdog heartbeat every 20.0s` | present | |
+| 0.1 | `sudo visudo -cf /etc/sudoers.d/turntable-shutdown`, then `ls -l` it | parsed OK; `-r--r----- root root` | pass|
+| 0.2 | `sudo -n -l` | lists `/usr/sbin/shutdown -h now` NOPASSWD | pass|
+| 0.3 | `systemctl show turntable-server -p User -p WatchdogUSec -p Restart` | `turntable`, `1min`, `always` | pass|
+| 0.4 | `ls -l /run/turntable/control.sock` | `srw-------` owned by `turntable` | pass|
+| 0.5 | journal has `Watchdog heartbeat every 20.0s` | present | pass|
 
 ## 1. Startup and e-stop (no motor needed)
 | # | Steps | Expect | Result |
 |---|-------|--------|--------|
-| 1.1 | Reboot, e-stop released | LED red while booting, then green; page `ready` | |
-| 1.2 | Reboot with e-stop **pressed** | `estop` (red/yellow); release it: back to `ready`. This is the joint-mode homing re-test | |
-| 1.3 | E-stop press and release while idle, three times | `estop` then `ready` each time | |
-| 1.4 | Two clients open; press e-stop | both show `estop` at once | |
+| 1.1 | Reboot, e-stop released | LED red while booting, then green; page `ready` | pass|
+| 1.2 | Reboot with e-stop **pressed** | `estop` (red/yellow); release it: back to `ready`. This is the joint-mode homing re-test | pass|
+| 1.3 | E-stop press and release while idle, three times | `estop` then `ready` each time | pass|
+| 1.4 | Two clients open; press e-stop | both show `estop` at once | pass|
 
 ## 2. Moves (software flow only)
 | # | Steps | Expect | Result |
 |---|-------|--------|--------|
-| 2.1 | 10 deg CW, then 10 deg CCW | `moving` (blue), then `ready`; `move_complete` fires | |
+| 2.1 | 10 deg CW, then 10 deg CCW | `moving` (blue), then `ready`; `move_complete` fires | awating logging|
 | 2.2 | From client A send 360 deg; from client B send another immediately | B rejected ("busy"), yellow flash | |
 | 2.3 | Send 0, 361, -5, direction `cw`/`X` (browser console `socket.emit`) | each rejected, no state change | |
 | 2.4 | Send 360 deg, press e-stop mid-move | `estop` right away, no `move_complete`; release: `ready` | |
