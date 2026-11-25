@@ -91,6 +91,7 @@ turntable/
 ├── linuxcnc.pyi            # Type stub for the linuxcnc module, for IDEs only (ignored at runtime)
 ├── pyproject.toml          # Python version + dependency minimums (uv.lock pins them)
 ├── description.md          # This file
+├── pi-test-plan.md         # On-Pi test checklist and results log (see "Testing")
 ├── LICENSE
 ├── tests/                  # pytest suite; fakes for linuxcnc and gpiozero (see "Testing")
 ├── .github/workflows/tests.yml   # runs the suite on every push
@@ -181,6 +182,12 @@ configured. Any client outside it gets 403 on HTTP, and WebSocket connections fr
 outside are refused in the `connect` handler. Flask's `before_request` does not see
 Socket.IO traffic, so both layers share one helper, `_client_allowed()`.
 Everything fails closed until the network has been resolved.
+
+Only **eth0** is trusted, on purpose. The Pi sits inside a stainless steel enclosure, which
+shields Wi-Fi, so wireless is not a supported way to reach the page and `wlan0` is never
+consulted. A client on any other interface is refused even if its address looks local.
+(`wifi-powersave-off.service` is left over from before this was settled and has no effect
+while `wlan0` is unused; it is harmless to disable.)
 
 ### Machine state
 The server holds the truth and derives everything from it via `_current_state()`.
@@ -359,7 +366,7 @@ If an LED pattern or state changes, update this page too.
 ---
 
 ## Known Issues / Notes
-- **Untested on the Pi** (covered by the fake-hardware suite only): the systemd watchdog
+- **Untested on the Pi** (checklist in `pi-test-plan.md`; covered by the fake-hardware suite only): the systemd watchdog
   (`systemctl show turntable-server -p WatchdogUSec`, then confirm a heartbeat line in the
   journal and that `kill -STOP <pid>` leads to a restart after ~60 s), `bounce_time` on the
   power button (confirm a normal press still shuts down), the sudoers entry (`sudo -n -l`
