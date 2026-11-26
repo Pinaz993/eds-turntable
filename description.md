@@ -284,6 +284,14 @@ recoverable `error` instead of sitting on "Shutting down" while still powered. A
 request while one is in progress is ignored. SIGTERM/SIGINT
 (systemd stop/restart, a deployment, Ctrl-C) only make the server exit.
 
+**As deployed, the sudoers rule is redundant.** Raspberry Pi OS gives the account made in the
+imager `NOPASSWD: ALL` (`/etc/sudoers.d/010_pi-nopasswd`); on this Pi `sudo -n -l` as `turntable`
+lists `(ALL) NOPASSWD: ALL` next to the usual `(ALL : ALL) ALL`. So `sudo -n` already runs anything,
+and removing `turntable-shutdown` does **not** make the shutdown fail. To exercise the
+"shutdown command failed" path (tests 4.2 and 4.3), make the command itself fail instead:
+`sudo mv /usr/sbin/shutdown /usr/sbin/shutdown.bak`, press the button, then move it back at once.
+See "Passwordless root" under Known Issues.
+
 ### LinuxCNC restarts
 `turntable-server.service` `Wants=` LinuxCNC rather than requiring it, so LinuxCNC crashing
 or restarting does not take the server down. At startup, `bridge.startup()` retries up to
@@ -379,6 +387,17 @@ If an LED pattern or state changes, update this page too.
   power button (confirm a normal press still shuts down), the sudoers entry (`sudo -n -l`
   as `turntable`, then press the button with the server stopped), and `Restart=always` on
   `linuxcnc.service` (`kill` it and confirm it returns and the page recovers).
+- **Passwordless root for the service account.** Because of the `NOPASSWD: ALL` rule described under
+  "Shutdown", the web server (network-facing, port 80, running as `turntable`) can become root
+  without a password, so a bug in it is a root compromise. The narrow `turntable-shutdown` rule only
+  starts to mean something once the broad one is gone. Not yet changed. To do it: confirm the source
+  with `sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/`; check that the account's password works
+  (`sudo -k`, then `sudo -l`) and keep a second SSH session open; `sudo mv
+  /etc/sudoers.d/010_pi-nopasswd /root/`; `sudo -k`; confirm `sudo -n true` now fails and
+  `sudo -n -l /usr/sbin/shutdown -h now` still matches; reboot and confirm `linuxcnc.service` starts, the
+  page reaches `ready`, and the button shuts the Pi down. If LinuxCNC needed the broad rule, move the
+  file back and add specific rules for what it needs instead. (`NoNewPrivileges=` is a separate matter,
+  next bullet.)
 - `NoNewPrivileges=` and similar systemd sandboxing are intentionally **not** set on
   `turntable-server.service`: the server shuts the Pi down through `sudo`, which they would block.
 - History: an earlier version used eventlet with `monkey_patch()`; on the Pi that stalled
