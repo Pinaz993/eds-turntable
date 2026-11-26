@@ -49,18 +49,18 @@ Run as the `turntable` user unless noted. Watch the journal in a second terminal
 ## 4. Shutdown and button
 | # | Steps | Expect | Result |
 |---|-------|--------|--------|
-| 4.1 | `echo hi \| socat - UNIX-CONNECT:/run/turntable/control.sock` | replies `unknown command`, nothing else happens | |
-| 4.2 | `sudo mv /etc/sudoers.d/turntable-shutdown /root/`, press button | red/blue for 3 s, then red blinking error "shutdown command failed"; page not stuck on shutdown | |
-| 4.3 | Same as 4.2 but with an error already showing (do 3.1 first, leave it) | the page leaves "Shutting down". **Expected to FAIL today**: known bug, `on_error` returns early without publishing | |
-| 4.4 | Restore the sudoers file. Stop the server, press button | direct fallback shutdown works | |
-| 4.5 | Restart the server. Press button | red/blue LED, page shows shutdown, Pi halts (do this last) | |
+| 4.1 | `echo hi \| socat - UNIX-CONNECT:/run/turntable/control.sock` | replies `unknown command`, nothing else happens | pass|
+| 4.2 | `sudo mv /etc/sudoers.d/turntable-shutdown /root/`, press button | red/blue for 3 s, then red blinking error "shutdown command failed"; page not stuck on shutdown | pass|
+| 4.3 | Same as 4.2 but with an error already showing (do 3.1 first, leave it) | the page leaves "Shutting down". **Expected to FAIL today**: known bug, `on_error` returns early without publishing | failed|
+| 4.4 | Restore the sudoers file. Stop the server, press button | direct fallback shutdown works | pass|
+| 4.5 | Restart the server. Press button | red/blue LED, page shows shutdown, Pi halts (do this last) | pass|
 
 ## 5. Network
 | # | Steps | Expect | Result |
 |---|-------|--------|--------|
-| 5.1 | Load the page from a LAN client | loads | |
-| 5.2 | Load it from outside the subnet (other VLAN/VPN), if available | 403 | |
-| 5.3 | Boot with the Ethernet cable out for more than 2 min, then plug it in | **Expected to FAIL today**: red blinking, never recovers without a restart. Confirms open item #6 | |
+| 5.1 | Load the page from a LAN client | loads | pass|
+| 5.2 | Load it from outside the subnet (other VLAN/VPN), if available | 403 | u/n|
+| 5.3 | Boot with the Ethernet cable out for more than 2 min, then plug it in | **Expected to FAIL today**: red blinking, never recovers without a restart. Confirms open item #6 | fail|
 
 ## 6. Platform
 | # | Check | Expect | Result |
