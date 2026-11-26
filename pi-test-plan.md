@@ -40,11 +40,11 @@ Run as the `turntable` user unless noted. Watch the journal in a second terminal
 |---|-------|--------|--------|
 | 3.1 | Drives off with no e-stop: `python3 -c "import linuxcnc as l; l.command().state(l.STATE_OFF)"` | error "Drives disabled without an e-stop", recoverable; e-stop press and release returns to `ready` | pass|
 | 3.2 | Same as 3.1, but during a 360 deg move | same error, busy cleared, no stuck `moving` | pass|
-| 3.3 | `sudo systemctl restart linuxcnc` while idle | `booting` within about 2 s, then `ready` on its own | failed|
-| 3.4 | `sudo pkill -9 -f linuxcnc` (idle) | systemd restarts it; page recovers to `ready` | |
-| 3.5 | Repeat 3.4 mid-move | page leaves `moving`, recovers | |
-| 3.6 | `sudo systemctl restart turntable-server` | Pi does **not** power off (the SIGTERM fix); clients reconnect; socket recreated, mode 0600 | |
-| 3.7 | `sudo kill -STOP $(systemctl show -p MainPID --value turntable-server)` | no heartbeats; systemd restarts it after about 60 s | |
+| 3.3 | `sudo systemctl restart linuxcnc` while idle | `booting` within about 2 s, then `ready` on its own | pass|
+| 3.4 | `sudo systemctl kill -s KILL linuxcnc.service` (idle) | systemd restarts it; page recovers to `ready` | pass|
+| 3.5 | Repeat 3.4 mid-move | page leaves `moving`, recovers | pass|
+| 3.6 | `sudo systemctl restart turntable-server` | Pi does **not** power off (the SIGTERM fix); clients reconnect; socket recreated, mode 0600 | pass|
+| 3.7 | `sudo kill -STOP $(systemctl show -p MainPID --value turntable-server)` | no heartbeats; systemd restarts it after about 60 s | pass|
 
 ## 4. Shutdown and button
 | # | Steps | Expect | Result |
