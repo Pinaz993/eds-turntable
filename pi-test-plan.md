@@ -29,18 +29,18 @@ Run as the `turntable` user unless noted. Watch the journal in a second terminal
 ## 2. Moves (software flow only)
 | # | Steps | Expect | Result |
 |---|-------|--------|--------|
-| 2.1 | 10 deg CW, then 10 deg CCW | `moving` (blue), then `ready`; `move_complete` fires | awating logging|
-| 2.2 | From client A send 360 deg; from client B send another immediately | B rejected ("busy"), yellow flash | |
-| 2.3 | Send 0, 361, -5, direction `cw`/`X` (browser console `socket.emit`) | each rejected, no state change | |
-| 2.4 | Send 360 deg, press e-stop mid-move | `estop` right away, no `move_complete`; release: `ready` | |
-| 2.5 | During `estop`, spam a bad command | LED stays red/yellow (flash must not replace it) | |
+| 2.1 | 10 deg CW, then 10 deg CCW | `moving` (blue), then `ready`; `move_complete` fires | pass|
+| 2.2 | From client A send 360 deg; from client B send another immediately | B rejected ("busy"), yellow flash | pass|
+| 2.3 | Send 0, 361, -5, direction `cw`/`X` (browser console `socket.emit`) | each rejected, no state change | pass|
+| 2.4 | Send 360 deg, press e-stop mid-move | `estop` right away, no `move_complete`; release: `ready` | pass|
+| 2.5 | During `estop`, spam a bad command | LED stays red/yellow (flash must not replace it) | pass |
 
 ## 3. Faults
 | # | Steps | Expect | Result |
 |---|-------|--------|--------|
-| 3.1 | Drives off with no e-stop: `python3 -c "import linuxcnc as l; l.command().state(l.STATE_OFF)"` | error "Drives disabled without an e-stop", recoverable; e-stop press and release returns to `ready` | |
-| 3.2 | Same as 3.1, but during a 360 deg move | same error, busy cleared, no stuck `moving` | |
-| 3.3 | `sudo systemctl restart linuxcnc` while idle | `booting` within about 2 s, then `ready` on its own | |
+| 3.1 | Drives off with no e-stop: `python3 -c "import linuxcnc as l; l.command().state(l.STATE_OFF)"` | error "Drives disabled without an e-stop", recoverable; e-stop press and release returns to `ready` | pass|
+| 3.2 | Same as 3.1, but during a 360 deg move | same error, busy cleared, no stuck `moving` | pass|
+| 3.3 | `sudo systemctl restart linuxcnc` while idle | `booting` within about 2 s, then `ready` on its own | failed|
 | 3.4 | `sudo pkill -9 -f linuxcnc` (idle) | systemd restarts it; page recovers to `ready` | |
 | 3.5 | Repeat 3.4 mid-move | page leaves `moving`, recovers | |
 | 3.6 | `sudo systemctl restart turntable-server` | Pi does **not** power off (the SIGTERM fix); clients reconnect; socket recreated, mode 0600 | |
