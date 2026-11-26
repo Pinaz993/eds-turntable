@@ -513,6 +513,7 @@ class LinuxCNCBridge:
             The direction of movement. Must be 'CW' or 'CCW'.
             CCW moves are negated before sending.
         """
+        started = time.monotonic()
         try:
             # Start from a clean error channel, so anything read after the move is the move's own.
             self.drain_errors()
@@ -549,6 +550,7 @@ class LinuxCNCBridge:
                     self.on_error(error_msg)
                     return
 
+            print(f"Move complete: {degrees:g} deg {direction} in {time.monotonic() - started:.1f}s", flush=True)
             # Clear before announcing, so the state the callback publishes is "ready", not "moving".
             self.clear_busy()
             self.on_move_complete()

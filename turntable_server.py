@@ -204,6 +204,14 @@ _LED_FOR_STATE = {
     'shutdown': 'shutdown',
 }
 
+def _client_addr() -> str:
+    """Address of the client whose request is being handled, for the log. Never raises."""
+    try:
+        return request.remote_addr or '?'
+    except RuntimeError:  # no request context
+        return '?'
+# End _client_addr()
+
 def _current_state() -> dict:
     """
     Work out the machine's state from the flags above. Returns the exact payload
@@ -223,10 +231,18 @@ def _current_state() -> dict:
     return {'state': 'ready'}
 # End _current_state()
 
+# The last state written to the log, so only changes are logged (every publish would be noise).
+_last_logged_state: str | None = None
+
 def _publish_state() -> None:
     """Set the LED to match the current state, and tell every connected client about it."""
+    global _last_logged_state
     with _publish_lock:
         state = _current_state()
+        if state['state'] != _last_logged_state:
+            detail = f" ({state['message']})" if state.get('message') else ''
+            print(f"State: {_last_logged_state or 'start'} -> {state['state']}{detail}", flush=True)
+            _last_logged_state = state['state']
         led.set_status(_LED_FOR_STATE[state['state']])
         socketio.emit('machine_status', state)
 # End _publish_state()
@@ -547,6 +563,8 @@ def handle_move_command(data=None) -> None:
         # never be hidden for two seconds by a client sending commands it knows will fail.
         if _current_state()['state'] in ('ready', 'moving'):
             led.set_status('command_rejected', recalculate=_recalculate_led_status)
+        # Log it, with what was asked for (clipped: it came from a client, and could be anything).
+        print(f"Move rejected from {_client_addr()}: {rejection_message} [{repr(data)[:100]}]", flush=True)
         # Inform the sender of the move that the move was rejected, and why.
         emit('move_error', {'message': rejection_message})
     # End reject_move()
@@ -606,6 +624,7 @@ def handle_move_command(data=None) -> None:
         return
 
     # If we've reached this point, then implement the move.
+    print(f"Move accepted from {_client_addr()}: {degrees:g} deg {direction}", flush=True)
     try:
         # Set the LED to tell the user the machine is moving, and let all clients know.
         _publish_state()

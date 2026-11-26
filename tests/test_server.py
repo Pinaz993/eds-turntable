@@ -101,7 +101,9 @@ def test_simultaneous_commands_only_one_wins(server):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert len(server.tasks) == 1
-    assert sum('move_started' in r for r in results) == 1
+    # move_started is broadcast to every connected client, so count the rejections instead:
+    # exactly one command won, and everyone else was told no.
+    assert sum('move_error' in r for r in results) == 7
 
 
 @pytest.mark.parametrize('flag', ['_in_estop', '_shutting_down'])
@@ -265,3 +267,30 @@ def test_sd_notify_reaches_a_notify_socket(monkeypatch, server, tmp_path):
 def test_sd_notify_survives_a_dead_socket(monkeypatch, server, tmp_path):
     monkeypatch.setenv('NOTIFY_SOCKET', str(tmp_path / 'nobody-home'))
     assert server._sd_notify('WATCHDOG=1') is False
+
+
+# --- logging ------------------------------------------------------------------
+
+def test_state_changes_are_logged_once(server, capsys):
+    server._last_logged_state = None
+    server._publish_state()
+    server._publish_state()          # same state again: no second line
+    server.bridge.set_busy()
+    server._publish_state()
+    out = capsys.readouterr().out
+    assert out.count('State: ') == 2
+    assert 'State: start -> ready' in out
+    assert 'State: ready -> moving' in out
+
+
+def test_error_message_is_in_the_state_log(server, capsys):
+    server.on_error('boom')
+    assert '-> error (boom)' in capsys.readouterr().out
+
+
+def test_accepted_and_rejected_moves_are_logged(server, capsys):
+    _send(server, {'degrees': 45, 'direction': 'CW'})
+    _send(server, {'degrees': 999, 'direction': 'CW'})
+    out = capsys.readouterr().out
+    assert 'Move accepted from 127.0.0.1: 45 deg CW' in out
+    assert 'Move rejected from 127.0.0.1:' in out
