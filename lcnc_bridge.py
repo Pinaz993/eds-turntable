@@ -197,6 +197,7 @@ class LinuxCNCBridge:
         on_move_complete: Callable,
         on_error:         Callable,
         on_move_aborted:  Callable | None = None,
+        on_tick:          Callable | None = None,
     ) -> None:
         self.on_ready         = on_ready
         self.on_move_complete = on_move_complete
@@ -204,6 +205,10 @@ class LinuxCNCBridge:
         # Called when a move is cut short by an e-stop (drives lost with no e-stop go to on_error).
         # Optional: with none set, an e-stop-aborted move simply ends quietly.
         self.on_move_aborted  = on_move_aborted
+        # Called every time a polling loop goes round (waiting for a state, waiting for NML to come
+        # up). It lets the caller see that a long operation is still making progress rather than
+        # stuck. Optional.
+        self._on_tick         = on_tick or (lambda: None)
         # Single semaphore shared across all NML objects in this bridge, and exposed
         # as bridge.lock for external callers (e.g. the e-stop monitor thread).
         self._lock     = threading.Lock()
@@ -280,6 +285,7 @@ class LinuxCNCBridge:
         start = time.time()
         # While we still have time
         while time.time() - start < timeout:
+            self._on_tick()
             # The poll might throw an error, be prepared.
             try:
                 # Try to grab the current state of the machine
@@ -379,6 +385,7 @@ class LinuxCNCBridge:
         print("Waiting for LinuxCNC NML bus...", flush=True)
         start = time.time()
         while True:
+            self._on_tick()
             try:
                 self.status.poll()
                 if self.status.task_state > 0: break

@@ -64,3 +64,24 @@ def test_drives_dropping_out_without_estop_is_an_error(bridge, machine):
 def test_drain_errors_is_bounded(bridge, machine):
     machine.errors.extend([(11, 'x')] * 500)
     assert bridge.drain_errors() == bridge.MAX_ERROR_DRAIN
+
+
+# --- ticks (long operations report progress to the caller) ---------------------
+
+def test_polling_loops_tick(bridge, machine):
+    ticks = []
+    bridge._on_tick = lambda: ticks.append(1)
+    assert not bridge.poll_until(lambda: False, timeout=0.02)
+    assert len(ticks) > 1                       # once per trip round the loop
+
+
+def test_startup_sequence_ticks_throughout(bridge, machine, monkeypatch):
+    ticks = []
+    bridge._on_tick = lambda: ticks.append(1)
+    # The fake ignores mode changes. Make it obey, so the sequence can run to the end.
+    monkeypatch.setattr(bridge.command, 'mode', lambda m: setattr(machine, 'task_mode', m))
+    machine.estop = False
+    # Every wait in the sequence is satisfied at once on this machine, so this is a floor:
+    # at least the NML wait plus one per step that polls.
+    bridge.startup_sequence()
+    assert len(ticks) >= 5

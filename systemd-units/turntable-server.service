@@ -20,9 +20,10 @@ Restart=always
 RestartSec=5
 # Unbuffered, so every log line reaches the journal even if the process is killed.
 Environment=PYTHONUNBUFFERED=1
-# systemd restarts the server if it stops sending heartbeats for 60 s (a hung linuxcnc call
+# systemd restarts the server if it stops sending heartbeats for 30 s (a hung linuxcnc call
 # freezes every thread). turntable_server.py sends them; see _watchdog().
-WatchdogSec=60
+# Not much lower: a Pi that stalls briefly (SD card, heavy load) would be restarted for nothing.
+WatchdogSec=30
 NotifyAccess=main
 # Safety net: if the server ever hangs on stop, systemd kills it after 10 s instead of 90 s.
 TimeoutStopSec=10

@@ -386,6 +386,19 @@ _estop_monitor_running = False
 # When the e-stop monitor last went round its loop (time.monotonic()), or None before it has
 # started. The systemd watchdog heartbeat depends on it (see _watchdog).
 _monitor_heartbeat: float | None = None
+# The monitor thread's id, so long operations can tell whether they are running inside it.
+_monitor_thread_ident: int | None = None
+
+def _tick_monitor() -> None:
+    """
+    Called from the bridge's polling loops. When that is the monitor thread, it counts as the monitor
+    being alive: a startup sequence run by the monitor takes a long time, but is visibly making
+    progress. Calls from any other thread (a move, say) are ignored, or they could hide a hung monitor.
+    """
+    global _monitor_heartbeat
+    if threading.get_ident() == _monitor_thread_ident:
+        _monitor_heartbeat = time.monotonic()
+# End _tick_monitor()
 
 # LinuxCNC runs as its own service and can crash or be restarted while this server stays up
 # (turntable-server.service only Wants= it). These track whether we have lost it.
@@ -508,8 +521,9 @@ def _monitor_estop():
     Continuously poll LinuxCNC stat for e-stop state changes.
     Designed for use in a background thread.
     """
-    global _estop_monitor_running, _in_estop, _booted, _system_error
+    global _estop_monitor_running, _in_estop, _booted, _system_error, _monitor_thread_ident
     _estop_monitor_running = True
+    _monitor_thread_ident = threading.get_ident()
     # Loop for as long as we are supposed to monitor.
     global _monitor_heartbeat
     while _estop_monitor_running:
@@ -837,10 +851,11 @@ signal.signal(signal.SIGINT,  _handle_exit)
 # including the web server and this one.
 # ---------------------------------------------------------------------------
 
-# How long the e-stop monitor may go without completing a loop before the heartbeat stops.
-# Generous on purpose: re-running the startup sequence inside the monitor legitimately takes
-# minutes in the worst case, and must not be mistaken for a hang.
-MONITOR_STALL_SEC = 300.0
+# How long the e-stop monitor may go without completing a loop, or ticking from inside a long
+# operation (see _tick_monitor), before the heartbeat stops. Re-running the startup sequence in the
+# monitor takes minutes in the worst case, but it ticks all the way through, so it isn't mistaken for
+# a hang. What is left to catch is a single call that never returns.
+MONITOR_STALL_SEC = 30.0
 
 def _sd_notify(message: str) -> bool:
     """Send *message* to systemd's notify socket. Does nothing (False) when not run by systemd."""
@@ -923,6 +938,7 @@ if __name__ == '__main__':
         on_move_complete=on_move_complete,
         on_error=on_error,
         on_move_aborted=on_move_aborted,
+        on_tick=lambda: _tick_monitor(),
     )
     # Listen for the shutdown button right away, independent of the network or LinuxCNC coming up.
     socketio.start_background_task(_control_listener)

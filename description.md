@@ -122,7 +122,7 @@ All are complete:
 | Unit                        | Runs                  | As       | Notes                                              |
 |-----------------------------|-----------------------|----------|----------------------------------------------------|
 | `linuxcnc.service`          | LinuxCNC + `turntable.ini` | turntable | `Restart=always`                              |
-| `turntable-server.service`  | `turntable_server.py` | turntable | Port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` (not root). `RuntimeDirectory=turntable` creates `/run/turntable/` for the control socket. `TimeoutStopSec=10`. `Restart=always`, `PYTHONUNBUFFERED=1`, `WatchdogSec=60` (see "Stability measures"). `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
+| `turntable-server.service`  | `turntable_server.py` | turntable | Port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` (not root). `RuntimeDirectory=turntable` creates `/run/turntable/` for the control socket. `TimeoutStopSec=10`. `Restart=always`, `PYTHONUNBUFFERED=1`, `WatchdogSec=30` (see "Stability measures"). `Wants=linuxcnc.service` (not `Requires=`): the server reconnects itself if LinuxCNC restarts |
 | `shutdown-button.service`   | `shutdown_button.py`  | turntable | Sends `shutdown` over `/run/turntable/control.sock`, or shuts down directly if the server isn't reachable. `Restart=always` |
 | `wifi-powersave-off.service`| `iw wlan0 set power_save off` | root | oneshot, `Restart=on-failure` (wlan0 may not exist yet at boot) |
 
@@ -298,12 +298,19 @@ What keeps the unit running unattended, and what each piece does and does not co
 
 - **Restart policy.** All three long-running units use `Restart=always`, so any exit (not
   just a non-zero one) brings them back. A deliberate `systemctl stop` is still respected.
-- **systemd watchdog.** `turntable-server.service` has `WatchdogSec=60`; `_watchdog()` sends
-  a heartbeat every 20 s. It stops sending if the e-stop monitor hasn't completed a loop in
-  `MONITOR_STALL_SEC` (300 s, long enough for a full startup sequence inside the monitor).
+- **systemd watchdog.** `turntable-server.service` has `WatchdogSec=30`; `_watchdog()` sends
+  a heartbeat every 10 s. It stops sending if the e-stop monitor has neither completed a loop
+  nor ticked in `MONITOR_STALL_SEC` (30 s). The bridge's polling loops tick (`_tick_monitor`), so
+  a long startup sequence inside the monitor stays healthy while it makes progress, and only a
+  call that never returns trips the limit. Ticks from other threads (a move) are ignored.
   If the whole process freezes (e.g. a `linuxcnc` call that blocks while holding the
   interpreter lock), no heartbeat is sent at all. Either way systemd restarts the server.
   This does not restart LinuxCNC itself, and the hardware e-stop never depends on it.
+  *Recognizing it:* `journalctl -u turntable-server` shows `Watchdog timeout (limit 30s)!`
+  (a frozen process), or `E-stop monitor has stopped; withholding watchdog heartbeat.` just
+  before the restart (a hung monitor). Until then the page is unresponsive and the LED keeps
+  whatever it last showed (so it can be green on a frozen server): nothing in a frozen process
+  can change it. Expect about 30 s to detect, then the usual boot sequence.
 - **Move bookkeeping.** The bridge is marked busy only for as long as something will clear it:
   if announcing a move fails, the flag is released. A timed-out move is sent `abort`.
   The LinuxCNC error channel is drained before each move, so messages LinuxCNC posted itself

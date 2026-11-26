@@ -294,3 +294,26 @@ def test_accepted_and_rejected_moves_are_logged(server, capsys):
     out = capsys.readouterr().out
     assert 'Move accepted from 127.0.0.1: 45 deg CW' in out
     assert 'Move rejected from 127.0.0.1:' in out
+
+
+# --- monitor liveness ticks ----------------------------------------------------
+
+def test_tick_from_monitor_thread_counts_as_alive(server):
+    import threading
+    server._monitor_thread_ident = threading.get_ident()
+    server._monitor_heartbeat = 1.0
+    server._tick_monitor()
+    assert server._monitor_heartbeat > 1.0
+
+
+def test_tick_from_another_thread_is_ignored(server):
+    import threading
+    server._monitor_thread_ident = threading.get_ident() + 1     # someone else
+    server._monitor_heartbeat = 1.0
+    t = threading.Thread(target=server._tick_monitor)
+    t.start(); t.join()
+    assert server._monitor_heartbeat == 1.0     # a busy move thread must not hide a hung monitor
+
+
+def test_stall_limit_is_tight_but_longer_than_a_poll(server):
+    assert 10 <= server.MONITOR_STALL_SEC <= 60
