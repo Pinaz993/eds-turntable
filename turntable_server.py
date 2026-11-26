@@ -436,6 +436,16 @@ LCNC_UNIT_CHECK_SEC = 1.0
 _lcnc_invocation: str | None = None
 _lcnc_invocation_checked: float = 0.0
 
+# Python objects that talked to the old LinuxCNC cannot be made to talk to the new one: rebuilding them
+# inside this process did not work on the machine, while a fresh process connects fine. So when the
+# service restarts, this server restarts too (systemd brings it straight back: Restart=always) and
+# connects the way it does at boot. The short delay lets the new LinuxCNC start getting up first, and
+# keeps a LinuxCNC that crashes in a loop from making this server restart faster than systemd allows.
+LCNC_RESTART_DELAY_SEC = 5.0
+# When to restart this server (time.monotonic()), or None if no restart is pending.
+_lcnc_restart_due: float | None = None
+_restart_requested: bool = False
+
 def _read_lcnc_invocation() -> str | None:
     """The InvocationID of LinuxCNC's current run, or None if systemd can't say (e.g. no systemd)."""
     try:
@@ -447,9 +457,20 @@ def _read_lcnc_invocation() -> str | None:
     return value if result.returncode == 0 and value else None
 # End _read_lcnc_invocation()
 
+def _restart_server() -> None:
+    """Exit so that systemd starts a fresh server process. Does nothing the second time it is called."""
+    global _restart_requested
+    if _restart_requested:
+        return
+    _restart_requested = True
+    print("[WARNING] Restarting the server to get a clean connection to the restarted LinuxCNC.", flush=True)
+    # SIGTERM takes the normal, clean exit path (see _handle_exit), and does not power off the Pi.
+    os.kill(os.getpid(), signal.SIGTERM)
+# End _restart_server()
+
 def _check_lcnc_restarted() -> None:
     """If LinuxCNC's service has started a new run since we last looked, drop the machine back to booting."""
-    global _lcnc_invocation, _lcnc_invocation_checked
+    global _lcnc_invocation, _lcnc_invocation_checked, _lcnc_restart_due
     now = time.monotonic()
     if now - _lcnc_invocation_checked < LCNC_UNIT_CHECK_SEC:
         return
@@ -459,9 +480,11 @@ def _check_lcnc_restarted() -> None:
         return  # Can't tell. Polling failures still catch a LinuxCNC that has really gone.
     previous, _lcnc_invocation = _lcnc_invocation, current
     if previous is not None and previous != current:
-        print("[WARNING] LinuxCNC service was restarted. Reconnecting.", flush=True)
+        print(f"[WARNING] LinuxCNC service was restarted. Restarting the server in {LCNC_RESTART_DELAY_SEC:g}s.",
+              flush=True)
         _mark_lcnc_lost()
-        bridge.reconnect()
+        if _lcnc_restart_due is None:
+            _lcnc_restart_due = now + LCNC_RESTART_DELAY_SEC
 # End _check_lcnc_restarted()
 
 def _note_lcnc_reachable():
@@ -497,6 +520,12 @@ def _monitor_estop():
             try:
                 # A restarted LinuxCNC may not make polling fail at all. Look at the service too.
                 _check_lcnc_restarted()
+                if _lcnc_restart_due is not None:
+                    # This server is about to restart itself. Polling the old connection means nothing.
+                    if time.monotonic() >= _lcnc_restart_due:
+                        _restart_server()
+                    socketio.sleep(0.25)
+                    continue
                 try:
                     # Grab the latest information
                     bridge.status.poll()
