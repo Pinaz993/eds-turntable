@@ -396,26 +396,73 @@ _lcnc_unreachable_since: float | None = None
 # True once polls have failed for LCNC_LOST_AFTER_SEC.
 _lcnc_lost: bool = False
 
-def _note_lcnc_unreachable():
+def _mark_lcnc_lost() -> None:
+    """Stop reporting the machine as ready: LinuxCNC is gone or restarting, and will need re-initializing."""
+    global _lcnc_lost, _booted, _in_estop
+    if _lcnc_lost:
+        return
+    _lcnc_lost = True
+    print("[WARNING] Lost contact with LinuxCNC. Waiting for it to come back.", flush=True)
+    # Whatever was happening is over. Show "booting" until we have re-run startup.
+    _booted = False
+    _in_estop = False
+    bridge.clear_busy()
+    _publish_state()
+# End _mark_lcnc_lost()
+
+def _note_lcnc_unreachable(exc: BaseException | None = None) -> None:
     """
     A poll of LinuxCNC just failed. Rebuild the connection (a restarted LinuxCNC never answers
     on the old one) and, if this has gone on long enough, stop reporting the machine as ready.
     """
-    global _lcnc_unreachable_since, _lcnc_lost, _booted, _in_estop
+    global _lcnc_unreachable_since
     now = time.monotonic()
     since = _lcnc_unreachable_since
     if since is None:
         since = _lcnc_unreachable_since = now
+        # Once per episode, and with the reason: this is the line that explains a "booting" screen.
+        detail = f" ({type(exc).__name__}: {exc})" if exc is not None else ''
+        print(f"[WARNING] Cannot poll LinuxCNC{detail}. Reconnecting.", flush=True)
     bridge.reconnect(bridge.RECONNECT_INTERVAL)
-    if not _lcnc_lost and now - since >= LCNC_LOST_AFTER_SEC:
-        _lcnc_lost = True
-        print("[WARNING] Lost contact with LinuxCNC. Waiting for it to come back.", flush=True)
-        # Whatever was happening is over. Show "booting" until we have re-run startup.
-        _booted = False
-        _in_estop = False
-        bridge.clear_busy()
-        _publish_state()
+    if now - since >= LCNC_LOST_AFTER_SEC:
+        _mark_lcnc_lost()
 # End _note_lcnc_unreachable()
+
+# systemd gives every run of a unit a new InvocationID. Watching it catches a LinuxCNC restart even
+# when polling never fails: after a restart the old connection can go on answering from stale
+# shared memory, reporting a machine that no longer exists.
+LCNC_UNIT = 'linuxcnc.service'
+LCNC_UNIT_CHECK_SEC = 1.0
+_lcnc_invocation: str | None = None
+_lcnc_invocation_checked: float = 0.0
+
+def _read_lcnc_invocation() -> str | None:
+    """The InvocationID of LinuxCNC's current run, or None if systemd can't say (e.g. no systemd)."""
+    try:
+        result = subprocess.run(['systemctl', 'show', LCNC_UNIT, '-p', 'InvocationID', '--value'],
+                                capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and value else None
+# End _read_lcnc_invocation()
+
+def _check_lcnc_restarted() -> None:
+    """If LinuxCNC's service has started a new run since we last looked, drop the machine back to booting."""
+    global _lcnc_invocation, _lcnc_invocation_checked
+    now = time.monotonic()
+    if now - _lcnc_invocation_checked < LCNC_UNIT_CHECK_SEC:
+        return
+    _lcnc_invocation_checked = now
+    current = _read_lcnc_invocation()
+    if current is None:
+        return  # Can't tell. Polling failures still catch a LinuxCNC that has really gone.
+    previous, _lcnc_invocation = _lcnc_invocation, current
+    if previous is not None and previous != current:
+        print("[WARNING] LinuxCNC service was restarted. Reconnecting.", flush=True)
+        _mark_lcnc_lost()
+        bridge.reconnect()
+# End _check_lcnc_restarted()
 
 def _note_lcnc_reachable():
     """A poll of LinuxCNC just succeeded. If we had lost it, bring the machine back up."""
@@ -448,8 +495,19 @@ def _monitor_estop():
         try:
             # If `linuxcnc.stat()` isn't available, we need to be prepared
             try:
-                # Grab the latest information
-                bridge.status.poll()
+                # A restarted LinuxCNC may not make polling fail at all. Look at the service too.
+                _check_lcnc_restarted()
+                try:
+                    # Grab the latest information
+                    bridge.status.poll()
+                except (linuxcnc.error, SystemError) as exc:
+                    # Whatever stat.poll() raises (e.g. "emcStatusBuffer invalid"), it means we cannot
+                    # talk to LinuxCNC: it is starting, restarting or gone. It is not an engine error
+                    # (those arrive through the error channel), and an e-stop could not clear it,
+                    # because we couldn't see the e-stop. Reconnect, and drop to "booting" if it persists.
+                    _note_lcnc_unreachable(exc)
+                    socketio.sleep(0.25)
+                    continue
                 # Polling worked. If LinuxCNC had gone away and is back, re-initialize first.
                 _note_lcnc_reachable()
                 # stat.estop is a direct boolean — True when e-stop is active
@@ -498,16 +556,9 @@ def _monitor_estop():
                     on_error("Drives disabled without an e-stop (following error or drive fault)")
 
             except (linuxcnc.error, SystemError) as exc:
-                # Grab the error text.
-                error_msg = str(exc)
-                # "nml" or "not ready" would indicate that the error is because the system is still starting up.
-                if isinstance(exc, SystemError) or "nml" in error_msg.lower() or "not ready" in error_msg.lower():
-                    # Not an error in itself: LinuxCNC is starting, restarting, or gone. Keep polling,
-                    # reconnecting as we go. If it stays gone, the state drops back to "booting".
-                    _note_lcnc_unreachable()
-                else:
-                    # This is an error we _don't_ expect. Stop the machine.
-                    on_error(f"Unexpected LinuxCNC Engine Error: {error_msg}")
+                # Not a polling failure (those are handled above), so something the monitor did
+                # to LinuxCNC went wrong. This is an error we _don't_ expect. Stop the machine.
+                on_error(f"Unexpected LinuxCNC Engine Error: {exc}")
             # End except
         except Exception:
             # Anything else (including an error raised while handling the errors above) must not
